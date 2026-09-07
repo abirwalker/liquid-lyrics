@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "spicetify-creator dev",
-    "build": "spicetify-creator build"
+    "build": "spicetify-creator build",
+    "lyrics:relay": "node --use-system-ca scripts/betterlyrics-relay.mjs"
   },
   "license": "MIT",
   "devDependencies": {
