@@ -1,0 +1,136 @@
+import { adaptBetterLyrics, createBetterLyricsProvider } from '../src/lyrics/providers/betterlyrics';
+import { adaptBiniLyrics, createBiniLyricsProvider } from '../src/lyrics/providers/binilyrics';
+import { adaptLrclib, createLrclibProvider } from '../src/lyrics/providers/lrclib';
+import { fromLRC, fromPlain, fromTTML } from '../src/lyrics/formats';
+import { isValidResult as validLyrics } from '../src/types/types';
+import type { LyricsResult as Lyrics, LyricsProvider } from '../src/types/types';
+import { fetchLyricsChain, createDefaultChain } from '../src/lyrics/chain';
+
+export function runIpadChecks(better: unknown, bini: unknown, lrc: unknown) {
+  const betterResult = adaptBetterLyrics(better);
+  if (betterResult !== null) throw new Error('Authentication error must not become lyrics');
+  const biniResult = adaptBiniLyrics(bini);
+  const lrcResult = adaptLrclib(lrc);
+  const plainInput = typeof lrc === 'object' && lrc !== null && 'plainLyrics' in lrc ? lrc.plainLyrics : null;
+  const plainResult = fromPlain('lrclib', plainInput);
+  function summarize(result: Lyrics | null, timing: 'line' | 'none') {
+    if (!result || !validLyrics(result)) throw new Error(`Invalid ${timing} result`);
+    if (!result.lines.every(line => line.timing === timing)) throw new Error('Incorrect timing capability');
+    if (result.lines.some(line => line.segments.some(segment => segment.startMs !== null))) throw new Error('Invented word timing');
+    return { source: result.source, lines: result.lines.length, timing,
+      timedSegments: 0, lastEndMs: result.lines[result.lines.length - 1].endMs };
+  }
+  return { song: 'iPad', artist: 'The Chainsmokers', betterLyricsRejected: betterResult === null,
+    bini: summarize(biniResult, 'line'), lrc: summarize(lrcResult, 'line'), plain: summarize(plainResult, 'none') };
+}
+
+export function runChecks(liveTTML?: string) {
+  let checks = 0;
+  function check(condition: boolean, description: string) {
+    if (!condition) throw new Error(description);
+    checks++;
+  }
+  const ttml = `<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p end='2.5' begin='1.0'><span end='1.5' begin='1.0'>Hello</span> <span begin='1.5' end='2.5'>world &amp; &#x2665;</span></p></div></body></tt>`;
+  const equivalent = [adaptBetterLyrics({ ttml }), adaptBiniLyrics(ttml)];
+  for (const result of equivalent) {
+    check(result !== null && validLyrics(result), 'Provider wrapper returns validated contract');
+    check(result?.lines[0].text === 'Hello world & ♥', 'Spacing, entities, and attribute order preserved');
+    check(result?.lines[0].timing === 'word' && result.lines[0].segments[0].startMs === 1000, 'Word timing in milliseconds');
+  }
+  check(JSON.stringify(equivalent[0]?.lines) === JSON.stringify(equivalent[1]?.lines), 'Different envelopes produce identical app data');
+  const plain = fromPlain('lrclib', 'One short line');
+  check(plain?.lines[0].timing === 'none' && plain.lines[0].startMs === null, 'Plain text has no invented timestamps');
+  const lrc = fromLRC('lrclib', '[00:01.00]Hello\n[00:03.00]');
+  check(lrc?.lines[0].endMs === 3000 && lrc.lines[0].timing === 'line', 'Blank LRC timestamp ends previous line');
+  check(lrc?.lines[0].segments[0].startMs === null, 'Line timing is not presented as word timing');
+  check(fromLRC('lrclib', '[00:01]Short')?.lines[0].endMs === null, 'Last LRC end remains unknown');
+  check(fromLRC('lrclib', '[00:01]Short', 4000)?.lines[0].endMs === 4000, 'Track duration bounds last line');
+  const repeated = fromLRC('lrclib', '[offset:100]\n[00:01][00:02]Repeat');
+  check(repeated?.lines.length === 2 && repeated.lines[0].startMs === 900 && repeated.lines[1].startMs === 1900, 'Repeated timestamps and offset');
+  check(adaptLrclib({ syncedLyrics: 'invalid', plainLyrics: 'Fallback' })?.lines[0].timing === 'none', 'Malformed LRC falls back to plain lyrics');
+  check(adaptLrclib({ instrumental: true })?.instrumental === true, 'Instrumental is distinct from missing lyrics');
+  check(adaptLrclib(null) === null && adaptBetterLyrics({ ttml: 42 }) === null, 'Malformed envelopes rejected');
+  check(fromTTML('binilyrics', '<tt><p>broken</tt>') === null, 'Malformed XML rejected');
+  check(fromTTML('binilyrics', '<tt><p begin="bad" end="3">Wrong</p></tt>') === null, 'Invalid timestamp is not silently zero');
+  check(fromTTML('binilyrics', '<tt><p begin="3" end="1">Wrong</p></tt>') === null, 'Reversed timing rejected');
+  check(fromTTML('binilyrics', '<tt><p begin="1" end="2">Short</p></tt>')?.lines[0].timing === 'line', 'TTML without timed spans is line-timed');
+  check(fromTTML('binilyrics', '<tt><p begin="1" dur="2s">Unsupported</p></tt>') === null, 'Unsupported timing profile fails explicitly');
+  const nested = fromTTML('binilyrics', '<tt><p begin="1" end="2"><span begin="1" end="2"><span>Nested</span> text</span></p></tt>');
+  check(nested?.lines[0].text === 'Nested text', 'Nested spans preserve text');
+  const live = adaptBetterLyrics({ ttml: liveTTML ?? ttml });
+  check(live !== null && validLyrics(live), 'TTML payload normalizes');
+  return { checks, live: live && {
+    source: live.source, lines: live.lines.length,
+    wordTimedLines: live.lines.filter(line => line.timing === 'word').length,
+    lineTimedLines: live.lines.filter(line => line.timing === 'line').length,
+    timedSegments: live.lines.reduce((sum, line) => sum + line.segments.filter(segment => segment.startMs !== null).length, 0),
+  } };
+}
+
+
+export async function runBoundaryChecks() {
+  let checks = 0;
+  function check(condition: boolean, message: string) {
+    if (!condition) throw new Error(message);
+    checks++;
+  }
+  const query = { song: 'Test', artist: 'Artist' };
+  const good = fromPlain('custom', 'A short song')!;
+  for (const bad of [null, {}, [], { ...good, source: '' }, { ...good, lines: [null] },
+    { ...good, instrumental: true }, { ...good, lines: [{ ...good.lines[0], startMs: NaN }] },
+    { ...good, lines: [{ ...good.lines[0], timing: 'word' }] },
+    { ...good, lines: [{ ...good.lines[0], text: 'mismatched text' }] },
+    { ...good, lines: [{ ...good.lines[0], segments: [{ text: 'bad' }] }] },
+  ]) check(!validLyrics(bad), 'Malformed result rejected without throwing');
+  check(validLyrics(good), 'Short lyrics valid');
+  check(validLyrics({ source: 'custom', instrumental: true, lines: [] }), 'Instrumental contract valid');
+  const providers: LyricsProvider[] = [
+    { id: 'broken', fetch: async () => { throw new Error('offline'); } },
+    { id: 'custom', fetch: async () => good },
+  ];
+  check((await fetchLyricsChain(query, providers))?.source === 'custom', 'Unknown provider needs no engine changes');
+  const controller = new AbortController();
+  check(await fetchLyricsChain(query, [{ id: 'custom', fetch: async () => { controller.abort(); return good; } }], controller.signal) === null, 'Late response after cancellation rejected');
+  check(await fetchLyricsChain(query, [{ id: 'wrong', fetch: async () => good }]) === null, 'Incorrect provenance rejected');
+  check(createDefaultChain().map(provider => provider.id).join(',') === 'betterlyrics,binilyrics,lrclib', 'Three active providers in order');
+  check(fromLRC('custom', '[offset:100]\n[00:00.05]Early')?.lines[0].startMs === 0, 'Offset clamps after subtraction');
+  check(adaptLrclib({ syncedLyrics: '[00:01]<00:01.00>Word', plainLyrics: 'Word' })?.lines[0].timing === 'none', 'Unsupported enhanced LRC falls back to plain text');
+  check(fromTTML('custom', '<tt><p begin="1" end="2"><![CDATA[Test & text]]></p></tt>')?.lines[0].text === 'Test & text', 'CDATA preserved');
+  const originalFetch = globalThis.fetch;
+  const ttml = '<tt><p begin="1" end="2">Short</p></tt>';
+  try {
+    const calls: string[] = [];
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      calls.push(url);
+      return new URL(url).searchParams.has('al') ? Response.json({ error: 'API key required' }, { status: 401 }) : Response.json({ ttml });
+    };
+    const better = await createBetterLyricsProvider().fetch({ ...query, album: 'Missing', durationMs: 4000 });
+    check(better?.source === 'betterlyrics' && calls.length === 2, 'Detailed request falls back and adapts');
+    check(new URL(calls[0]).searchParams.get('d') === '4', 'Milliseconds converted for request');
+    globalThis.fetch = async () => Response.json({ instrumental: true });
+    check((await createLrclibProvider().fetch(query))?.instrumental === true, 'Instrumental transport adapts');
+    globalThis.fetch = async () => Response.json({ syncedLyrics: 'broken', plainLyrics: 'Fallback' });
+    check((await createLrclibProvider().fetch(query))?.lines[0].timing === 'none', 'Plain fallback through fetcher');
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.includes('getLyrics')) return Response.json({ results: [
+        null, { track_name: 42 },
+        { track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://fixture.invalid/failed' },
+        { track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://fixture.invalid/good' },
+      ] });
+      if (url.endsWith('failed')) throw new Error('candidate unavailable');
+      return new Response(ttml);
+    };
+    check((await createBiniLyricsProvider().fetch(query))?.source === 'binilyrics', 'Malformed search items and failed candidate do not block valid candidate');
+    globalThis.fetch = async () => { throw new Error('network unavailable'); };
+    for (const provider of createDefaultChain()) check(await provider.fetch(query) === null, 'Offline provider returns null');
+    const stopped = new AbortController();
+    stopped.abort();
+    let requested = false;
+    globalThis.fetch = async () => { requested = true; return new Response('unexpected'); };
+    for (const provider of createDefaultChain()) check(await provider.fetch(query, stopped.signal) === null, 'Pre-aborted provider returns null');
+    check(!requested, 'Pre-aborted requests never sent');
+  } finally { globalThis.fetch = originalFetch; }
+  return { checks };
+}
