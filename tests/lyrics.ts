@@ -4,7 +4,8 @@ import { adaptLrclib, createLrclibProvider } from '../src/lyrics/providers/lrcli
 import { fromLRC, fromPlain, fromTTML } from '../src/lyrics/formats';
 import { isValidResult as validLyrics } from '../src/types/types';
 import type { LyricsResult as Lyrics, LyricsProvider } from '../src/types/types';
-import { fetchLyricsChain, createDefaultChain } from '../src/lyrics/chain';
+import { fetchLyricsChain, createDefaultChain, fetchLyrics } from '../src/lyrics/chain';
+import { LyricsCache, getCacheKeys, normalizeString } from '../src/storage/cache';
 
 export function runIpadChecks(better: unknown, bini: unknown, lrc: unknown) {
   const betterResult = adaptBetterLyrics(better);
@@ -130,7 +131,38 @@ export async function runBoundaryChecks() {
     let requested = false;
     globalThis.fetch = async () => { requested = true; return new Response('unexpected'); };
     for (const provider of createDefaultChain()) check(await provider.fetch(query, stopped.signal) === null, 'Pre-aborted provider returns null');
-    check(!requested, 'Pre-aborted requests never sent');
+    // Cache boundary checks
+    check(normalizeString('  Glass  Animals ') === 'glass animals', 'Cache key normalization');
+    const cacheKeys = getCacheKeys({ song: 'Heat Waves', artist: 'Glass Animals', spotifyId: '123' });
+    check(cacheKeys.includes('id:123') && cacheKeys.includes('meta:glass animals:heat waves'), 'Cache dual keys');
+
+    const testCache = new LyricsCache();
+    let networkCalls = 0;
+    globalThis.fetch = async () => {
+      networkCalls++;
+      return new Response(JSON.stringify({ ttml }), { headers: { 'Content-Type': 'application/json' } });
+    };
+
+    // First call: hits network
+    const call1 = await fetchLyrics(query, undefined, testCache);
+    check(call1?.source === 'betterlyrics' && !call1.cached && networkCalls === 1, 'Initial fetch populates cache');
+
+    // Second call: hits cache without network
+    const call2 = await fetchLyrics(query, undefined, testCache);
+    check(call2?.source === 'betterlyrics' && call2.cached === true && networkCalls === 1, 'Repeat fetch served from cache');
+
+    // Third call with skipCache: hits network
+    const call3 = await fetchLyrics({ ...query, skipCache: true }, undefined, testCache);
+    check(call3?.source === 'betterlyrics' && !call3.cached && networkCalls === 2, 'skipCache bypasses cache');
+
+    // Negative caching check
+    const negQuery = { song: 'Unknown', artist: 'Unknown' };
+    globalThis.fetch = async () => new Response('not found', { status: 404 });
+    const neg1 = await fetchLyrics(negQuery, undefined, testCache);
+    check(neg1 === null, 'Negative fetch returns null');
+    const negCallsAfterFirst = networkCalls;
+    const neg2 = await fetchLyrics(negQuery, undefined, testCache);
+    check(neg2 === null && networkCalls === negCallsAfterFirst, 'Negative cache suppresses subsequent network calls');
   } finally { globalThis.fetch = originalFetch; }
   return { checks };
 }

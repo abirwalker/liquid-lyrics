@@ -18,6 +18,7 @@ export interface LyricsResult {
   source: string;
   instrumental: boolean;
   lines: LyricsLine[];
+  cached?: boolean;
 }
 
 export interface LyricsQuery {
@@ -26,6 +27,7 @@ export interface LyricsQuery {
   album?: string;
   durationMs?: number;
   spotifyId?: string;
+  skipCache?: boolean;
 }
 
 export interface LyricsProvider {

@@ -4,6 +4,8 @@ import { createBiniLyricsProvider } from './providers/binilyrics';
 import { createLrclibProvider } from './providers/lrclib';
 import { createBetterLyricsProvider } from './providers/betterlyrics';
 
+import { defaultCache } from '../storage/cache';
+
 export async function fetchLyricsChain(
   query: LyricsQuery,
   providers: LyricsProvider[],
@@ -26,6 +28,27 @@ export function createDefaultChain(): LyricsProvider[] {
   return [createBetterLyricsProvider(), createBiniLyricsProvider(), createLrclibProvider()];
 }
 
-export async function fetchLyrics(query: LyricsQuery, signal?: AbortSignal): Promise<LyricsResult | null> {
-  return fetchLyricsChain(query, createDefaultChain(), signal);
+export async function fetchLyrics(
+  query: LyricsQuery,
+  signal?: AbortSignal,
+  cache = defaultCache,
+): Promise<LyricsResult | null> {
+  if (!query.skipCache && cache) {
+    const cached = await cache.get(query);
+    if (cached.hit) {
+      if (cached.result === null) {
+        return null;
+      }
+      return { ...cached.result, cached: true };
+    }
+  }
+
+  const result = await fetchLyricsChain(query, createDefaultChain(), signal);
+  if (signal?.aborted) return null;
+
+  if (cache) {
+    await cache.set(query, result);
+  }
+
+  return result;
 }
