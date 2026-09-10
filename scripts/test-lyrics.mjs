@@ -29,13 +29,9 @@ const result = await build({ entryPoints: [resolve(root, 'tests/lyrics.ts')], bu
 });
 let fixtureArguments = '';
 if (fixtures) {
-  const ipad = await Promise.all(['betterlyrics', 'binilyrics', 'lrclib'].map(async source =>
+  const ipad = await Promise.all(['binilyrics', 'lrclib'].map(async source =>
     JSON.parse(await readFile(resolve(root, `logs/sandbox/lyrics-adapters/ipad-${source}.json`), 'utf8')).body));
-  const response = await fetch('http://127.0.0.1:17381/getLyrics?s=Heat%20Waves&a=Glass%20Animals', { signal: AbortSignal.timeout(15000) });
-  if (!response.ok) throw new Error(`Heat Waves helper response: ${response.status}`);
-  const heatWaves = await response.json();
-  if (typeof heatWaves.ttml !== 'string' || !heatWaves.ttml) throw new Error('Heat Waves response has no TTML.');
-  fixtureArguments = `report.heatWaves = LyricsTests.runChecks(${JSON.stringify(heatWaves.ttml)}); report.ipad = LyricsTests.runIpadChecks(...${JSON.stringify(ipad)});`;
+  fixtureArguments = `report.ipad = LyricsTests.runIpadChecks(...${JSON.stringify(ipad)});`;
 }
 const script = result.outputFiles[0].text + `
 (async () => {

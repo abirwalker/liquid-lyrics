@@ -1,4 +1,3 @@
-import { adaptBetterLyrics, createBetterLyricsProvider } from '../src/lyrics/providers/betterlyrics';
 import { adaptBiniLyrics, createBiniLyricsProvider } from '../src/lyrics/providers/binilyrics';
 import { adaptLrclib, createLrclibProvider } from '../src/lyrics/providers/lrclib';
 import { fromLRC, fromPlain, fromTTML } from '../src/lyrics/formats';
@@ -7,9 +6,7 @@ import type { LyricsResult as Lyrics, LyricsProvider } from '../src/types/types'
 import { fetchLyricsChain, createDefaultChain, fetchLyrics } from '../src/lyrics/chain';
 import { LyricsCache, getCacheKeys, normalizeString } from '../src/storage/cache';
 
-export function runIpadChecks(better: unknown, bini: unknown, lrc: unknown) {
-  const betterResult = adaptBetterLyrics(better);
-  if (betterResult !== null) throw new Error('Authentication error must not become lyrics');
+export function runIpadChecks(bini: unknown, lrc: unknown) {
   const biniResult = adaptBiniLyrics(bini);
   const lrcResult = adaptLrclib(lrc);
   const plainInput = typeof lrc === 'object' && lrc !== null && 'plainLyrics' in lrc ? lrc.plainLyrics : null;
@@ -21,7 +18,7 @@ export function runIpadChecks(better: unknown, bini: unknown, lrc: unknown) {
     return { source: result.source, lines: result.lines.length, timing,
       timedSegments: 0, lastEndMs: result.lines[result.lines.length - 1].endMs };
   }
-  return { song: 'iPad', artist: 'The Chainsmokers', betterLyricsRejected: betterResult === null,
+  return { song: 'iPad', artist: 'The Chainsmokers',
     bini: summarize(biniResult, 'line'), lrc: summarize(lrcResult, 'line'), plain: summarize(plainResult, 'none') };
 }
 
@@ -32,13 +29,13 @@ export function runChecks(liveTTML?: string) {
     checks++;
   }
   const ttml = `<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p end='2.5' begin='1.0'><span end='1.5' begin='1.0'>Hello</span> <span begin='1.5' end='2.5'>world &amp; &#x2665;</span></p></div></body></tt>`;
-  const equivalent = [adaptBetterLyrics({ ttml }), adaptBiniLyrics(ttml)];
+  const equivalent = [fromTTML('binilyrics', ttml), adaptBiniLyrics(ttml)];
   for (const result of equivalent) {
     check(result !== null && validLyrics(result), 'Provider wrapper returns validated contract');
     check(result?.lines[0].text === 'Hello world & ♥', 'Spacing, entities, and attribute order preserved');
     check(result?.lines[0].timing === 'word' && result.lines[0].segments[0].startMs === 1000, 'Word timing in milliseconds');
   }
-  check(JSON.stringify(equivalent[0]?.lines) === JSON.stringify(equivalent[1]?.lines), 'Different envelopes produce identical app data');
+  check(JSON.stringify(equivalent[0]?.lines) === JSON.stringify(equivalent[1]?.lines), 'BiniLyrics adapter preserves the shared TTML result');
   const plain = fromPlain('lrclib', 'One short line');
   check(plain?.lines[0].timing === 'none' && plain.lines[0].startMs === null, 'Plain text has no invented timestamps');
   const lrc = fromLRC('lrclib', '[00:01.00]Hello\n[00:03.00]');
@@ -50,7 +47,7 @@ export function runChecks(liveTTML?: string) {
   check(repeated?.lines.length === 2 && repeated.lines[0].startMs === 900 && repeated.lines[1].startMs === 1900, 'Repeated timestamps and offset');
   check(adaptLrclib({ syncedLyrics: 'invalid', plainLyrics: 'Fallback' })?.lines[0].timing === 'none', 'Malformed LRC falls back to plain lyrics');
   check(adaptLrclib({ instrumental: true })?.instrumental === true, 'Instrumental is distinct from missing lyrics');
-  check(adaptLrclib(null) === null && adaptBetterLyrics({ ttml: 42 }) === null, 'Malformed envelopes rejected');
+  check(adaptLrclib(null) === null && adaptBiniLyrics(42) === null, 'Malformed envelopes rejected');
   check(fromTTML('binilyrics', '<tt><p>broken</tt>') === null, 'Malformed XML rejected');
   check(fromTTML('binilyrics', '<tt><p begin="bad" end="3">Wrong</p></tt>') === null, 'Invalid timestamp is not silently zero');
   check(fromTTML('binilyrics', '<tt><p begin="3" end="1">Wrong</p></tt>') === null, 'Reversed timing rejected');
@@ -58,7 +55,7 @@ export function runChecks(liveTTML?: string) {
   check(fromTTML('binilyrics', '<tt><p begin="1" dur="2s">Unsupported</p></tt>') === null, 'Unsupported timing profile fails explicitly');
   const nested = fromTTML('binilyrics', '<tt><p begin="1" end="2"><span begin="1" end="2"><span>Nested</span> text</span></p></tt>');
   check(nested?.lines[0].text === 'Nested text', 'Nested spans preserve text');
-  const live = adaptBetterLyrics({ ttml: liveTTML ?? ttml });
+  const live = adaptBiniLyrics(liveTTML ?? ttml);
   check(live !== null && validLyrics(live), 'TTML payload normalizes');
   return { checks, live: live && {
     source: live.source, lines: live.lines.length,
@@ -93,22 +90,13 @@ export async function runBoundaryChecks() {
   const controller = new AbortController();
   check(await fetchLyricsChain(query, [{ id: 'custom', fetch: async () => { controller.abort(); return good; } }], controller.signal) === null, 'Late response after cancellation rejected');
   check(await fetchLyricsChain(query, [{ id: 'wrong', fetch: async () => good }]) === null, 'Incorrect provenance rejected');
-  check(createDefaultChain().map(provider => provider.id).join(',') === 'betterlyrics,binilyrics,lrclib', 'Three active providers in order');
+  check(createDefaultChain().map(provider => provider.id).join(',') === 'binilyrics,lrclib', 'Two active providers in order');
   check(fromLRC('custom', '[offset:100]\n[00:00.05]Early')?.lines[0].startMs === 0, 'Offset clamps after subtraction');
   check(adaptLrclib({ syncedLyrics: '[00:01]<00:01.00>Word', plainLyrics: 'Word' })?.lines[0].timing === 'none', 'Unsupported enhanced LRC falls back to plain text');
   check(fromTTML('custom', '<tt><p begin="1" end="2"><![CDATA[Test & text]]></p></tt>')?.lines[0].text === 'Test & text', 'CDATA preserved');
   const originalFetch = globalThis.fetch;
   const ttml = '<tt><p begin="1" end="2">Short</p></tt>';
   try {
-    const calls: string[] = [];
-    globalThis.fetch = async (input) => {
-      const url = String(input);
-      calls.push(url);
-      return new URL(url).searchParams.has('al') ? Response.json({ error: 'API key required' }, { status: 401 }) : Response.json({ ttml });
-    };
-    const better = await createBetterLyricsProvider().fetch({ ...query, album: 'Missing', durationMs: 4000 });
-    check(better?.source === 'betterlyrics' && calls.length === 2, 'Detailed request falls back and adapts');
-    check(new URL(calls[0]).searchParams.get('d') === '4', 'Milliseconds converted for request');
     globalThis.fetch = async () => Response.json({ instrumental: true });
     check((await createLrclibProvider().fetch(query))?.instrumental === true, 'Instrumental transport adapts');
     globalThis.fetch = async () => Response.json({ syncedLyrics: 'broken', plainLyrics: 'Fallback' });
@@ -140,24 +128,25 @@ export async function runBoundaryChecks() {
     let networkCalls = 0;
     globalThis.fetch = async () => {
       networkCalls++;
-      return new Response(JSON.stringify({ ttml }), { headers: { 'Content-Type': 'application/json' } });
+      return Response.json({ syncedLyrics: '[00:01]Short' });
     };
 
     // First call: hits network
+    await testCache.set(query, { ...fromPlain('retired-provider', 'Old result')! });
     const call1 = await fetchLyrics(query, undefined, testCache);
-    check(call1?.source === 'betterlyrics' && !call1.cached && networkCalls === 1, 'Initial fetch populates cache');
+    check(call1?.source === 'lrclib' && !call1.cached && networkCalls === 2, 'Initial fetch populates cache');
 
     // Second call: hits cache without network
     const call2 = await fetchLyrics(query, undefined, testCache);
-    check(call2?.source === 'betterlyrics' && call2.cached === true && networkCalls === 1, 'Repeat fetch served from cache');
+    check(call2?.source === 'lrclib' && call2.cached === true && networkCalls === 2, 'Repeat fetch served from cache');
 
     // Third call with skipCache: hits network
     const call3 = await fetchLyrics({ ...query, skipCache: true }, undefined, testCache);
-    check(call3?.source === 'betterlyrics' && !call3.cached && networkCalls === 2, 'skipCache bypasses cache');
+    check(call3?.source === 'lrclib' && !call3.cached && networkCalls === 4, 'skipCache bypasses cache');
 
     // Negative caching check
     const negQuery = { song: 'Unknown', artist: 'Unknown' };
-    globalThis.fetch = async () => new Response('not found', { status: 404 });
+    globalThis.fetch = async () => { networkCalls++; return new Response('not found', { status: 404 }); };
     const neg1 = await fetchLyrics(negQuery, undefined, testCache);
     check(neg1 === null, 'Negative fetch returns null');
     const negCallsAfterFirst = networkCalls;
