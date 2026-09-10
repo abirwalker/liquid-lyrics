@@ -1,5 +1,6 @@
 import { adaptBiniLyrics, createBiniLyricsProvider, createBiniSearchPlan, selectBiniItems } from '../src/lyrics/providers/binilyrics';
 import { adaptLrclib, createLrclibProvider } from '../src/lyrics/providers/lrclib';
+import { adaptSpotifyLyrics, createSpotifyLyricsProvider } from '../src/lyrics/providers/spotify';
 import { fromLRC, fromPlain, fromTTML } from '../src/lyrics/formats';
 import { isValidResult as validLyrics } from '../src/types/types';
 import type { LyricsResult as Lyrics, LyricsProvider } from '../src/types/types';
@@ -90,7 +91,7 @@ export async function runBoundaryChecks() {
   const controller = new AbortController();
   check(await fetchLyricsChain(query, [{ id: 'custom', fetch: async () => { controller.abort(); return good; } }], controller.signal) === null, 'Late response after cancellation rejected');
   check(await fetchLyricsChain(query, [{ id: 'wrong', fetch: async () => good }]) === null, 'Incorrect provenance rejected');
-  check(createDefaultChain().map(provider => provider.id).join(',') === 'binilyrics,lrclib', 'Two active providers in order');
+  check(createDefaultChain().map(provider => provider.id).join(',') === 'binilyrics,lrclib,spotify', 'Three active providers in order');
   const featuredPlan = createBiniSearchPlan({ song: 'Be Kind (with Halsey)', artist: 'Marshmello, Halsey' });
   check(featuredPlan?.term === 'Be Kind Marshmello' && !featuredPlan.titleOnly, 'Bini uses one cleaned metadata query');
   const localizedQuery = { song: '芒种', artist: '音阙诗听, 赵方婧', durationMs: 216000 };
@@ -108,6 +109,18 @@ export async function runBoundaryChecks() {
   check(fromTTML('custom', '<tt><p begin="1" end="2"><![CDATA[Test & text]]></p></tt>')?.lines[0].text === 'Test & text', 'CDATA preserved');
   const originalFetch = globalThis.fetch;
   const ttml = '<tt><p begin="1" end="2">Short</p></tt>';
+  const spotifyFixture = { lyrics: { syncType: 'LINE_SYNCED', lines: [
+    { startTimeMs: '1000', words: 'First line', endTimeMs: '0' },
+    { startTimeMs: '3000', words: 'Second line', endTimeMs: '5000' },
+  ] } };
+  const spotifyResult = adaptSpotifyLyrics(spotifyFixture, 5000);
+  check(spotifyResult?.lines.length === 2 && spotifyResult.lines[0].endMs === 3000,
+    'Spotify line timing adapts and infers missing boundary');
+  check(adaptSpotifyLyrics({ lyrics: { syncType: 'UNSYNCED', lines: [{ words: 'Plain line' }] } })?.lines[0].timing === 'none',
+    'Spotify unsynced lyrics adapt without invented timing');
+  check(adaptSpotifyLyrics({ lyrics: { syncType: 'SYLLABLE_SYNCED', lines: [{ words: 'Unsupported' }] } }) === null,
+    'Unsupported Spotify timing rejected');
+  const originalSpicetify = (globalThis as any).Spicetify;
   try {
     let lrclibUrl = '';
     globalThis.fetch = async input => { lrclibUrl = String(input); return Response.json({ instrumental: true }); };
@@ -128,6 +141,21 @@ export async function runBoundaryChecks() {
       return new Response(ttml);
     };
     check((await createBiniLyricsProvider().fetch(query))?.source === 'binilyrics', 'Malformed search items and failed candidate do not block valid candidate');
+    let spotifyUrl = '';
+    (globalThis as any).Spicetify = { CosmosAsync: { get: async (url: string) => {
+      spotifyUrl = url;
+      return spotifyFixture;
+    } } };
+    check((await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: 'track123', durationMs: 5000 }))?.source === 'spotify' &&
+      spotifyUrl.includes('/track/track123?'), 'Spotify provider uses track ID and adapts Cosmos response');
+    check(await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: undefined }) === null,
+      'Spotify provider requires track ID');
+    (globalThis as any).Spicetify.CosmosAsync.get = () => new Promise(() => {});
+    const spotifyAbort = new AbortController();
+    setTimeout(() => spotifyAbort.abort(), 10);
+    check(await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: 'track123' }, spotifyAbort.signal) === null,
+      'Spotify provider stops waiting when caller aborts');
+    (globalThis as any).Spicetify = originalSpicetify;
     globalThis.fetch = async () => { throw new Error('network unavailable'); };
     for (const provider of createDefaultChain()) check(await provider.fetch(query) === null, 'Offline provider returns null');
     const stopped = new AbortController();
@@ -168,6 +196,9 @@ export async function runBoundaryChecks() {
     const negCallsAfterFirst = networkCalls;
     const neg2 = await fetchLyrics(negQuery, undefined, testCache);
     check(neg2 === null && networkCalls === negCallsAfterFirst, 'Negative cache suppresses subsequent network calls');
-  } finally { globalThis.fetch = originalFetch; }
+  } finally {
+    globalThis.fetch = originalFetch;
+    (globalThis as any).Spicetify = originalSpicetify;
+  }
   return { checks };
 }

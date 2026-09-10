@@ -2,6 +2,7 @@
 import { isValidResult } from '../types/types';
 import { createBiniLyricsProvider } from './providers/binilyrics';
 import { createLrclibProvider } from './providers/lrclib';
+import { createSpotifyLyricsProvider } from './providers/spotify';
 import { defaultCache } from '../storage/cache';
 import { cleanTitle, getPrimaryArtist, createCleanQuery } from './cleaner';
 
@@ -26,7 +27,7 @@ export async function fetchLyricsChain(
 }
 
 export function createDefaultChain(): LyricsProvider[] {
-  return [createBiniLyricsProvider(), createLrclibProvider()];
+  return [createBiniLyricsProvider(), createLrclibProvider(), createSpotifyLyricsProvider()];
 }
 
 export async function fetchLyrics(
