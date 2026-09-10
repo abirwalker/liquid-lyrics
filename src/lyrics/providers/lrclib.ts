@@ -18,7 +18,6 @@ export function createLrclibProvider(): LyricsProvider {
       const artist = query.artist.trim();
       if (!song || !artist || signal?.aborted) return null;
       const params = new URLSearchParams({ track_name: song, artist_name: artist });
-      if (query.album?.trim()) params.set('album_name', query.album.trim());
       if (typeof query.durationMs === 'number' && Number.isFinite(query.durationMs) && query.durationMs > 0) {
         params.set('duration', Math.round(query.durationMs / 1000).toString());
       }

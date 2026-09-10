@@ -1,4 +1,4 @@
-import { adaptBiniLyrics, createBiniLyricsProvider } from '../src/lyrics/providers/binilyrics';
+import { adaptBiniLyrics, createBiniLyricsProvider, createBiniSearchPlan, selectBiniItems } from '../src/lyrics/providers/binilyrics';
 import { adaptLrclib, createLrclibProvider } from '../src/lyrics/providers/lrclib';
 import { fromLRC, fromPlain, fromTTML } from '../src/lyrics/formats';
 import { isValidResult as validLyrics } from '../src/types/types';
@@ -91,14 +91,30 @@ export async function runBoundaryChecks() {
   check(await fetchLyricsChain(query, [{ id: 'custom', fetch: async () => { controller.abort(); return good; } }], controller.signal) === null, 'Late response after cancellation rejected');
   check(await fetchLyricsChain(query, [{ id: 'wrong', fetch: async () => good }]) === null, 'Incorrect provenance rejected');
   check(createDefaultChain().map(provider => provider.id).join(',') === 'binilyrics,lrclib', 'Two active providers in order');
+  const featuredPlan = createBiniSearchPlan({ song: 'Be Kind (with Halsey)', artist: 'Marshmello, Halsey' });
+  check(featuredPlan?.term === 'Be Kind Marshmello' && !featuredPlan.titleOnly, 'Bini uses one cleaned metadata query');
+  const localizedQuery = { song: '芒种', artist: '音阙诗听, 赵方婧', durationMs: 216000 };
+  const localizedPlan = createBiniSearchPlan(localizedQuery)!;
+  check(localizedPlan.term === '芒种' && localizedPlan.titleOnly, 'Bini uses title-only query for localized CJK metadata');
+  const localizedItem = { track_name: '芒种', artist_name: "Listening to Yinque's Poems & Fangjing Zhao",
+    duration: 216, timing_type: 'word', lyricsUrl: 'https://fixture.invalid/localized' };
+  check(selectBiniItems([localizedItem], localizedQuery, localizedPlan).length === 1, 'Unique exact title and duration accepted');
+  check(selectBiniItems([{ ...localizedItem, duration: 240 }], localizedQuery, localizedPlan).length === 0,
+    'Title-only duration mismatch rejected');
+  check(selectBiniItems([localizedItem, { ...localizedItem }], localizedQuery, localizedPlan).length === 0,
+    'Ambiguous title-only candidates rejected');
   check(fromLRC('custom', '[offset:100]\n[00:00.05]Early')?.lines[0].startMs === 0, 'Offset clamps after subtraction');
   check(adaptLrclib({ syncedLyrics: '[00:01]<00:01.00>Word', plainLyrics: 'Word' })?.lines[0].timing === 'none', 'Unsupported enhanced LRC falls back to plain text');
   check(fromTTML('custom', '<tt><p begin="1" end="2"><![CDATA[Test & text]]></p></tt>')?.lines[0].text === 'Test & text', 'CDATA preserved');
   const originalFetch = globalThis.fetch;
   const ttml = '<tt><p begin="1" end="2">Short</p></tt>';
   try {
-    globalThis.fetch = async () => Response.json({ instrumental: true });
-    check((await createLrclibProvider().fetch(query))?.instrumental === true, 'Instrumental transport adapts');
+    let lrclibUrl = '';
+    globalThis.fetch = async input => { lrclibUrl = String(input); return Response.json({ instrumental: true }); };
+    check((await createLrclibProvider().fetch({ ...query, album: 'Over-constrained album', durationMs: 4000 }))?.instrumental === true,
+      'Instrumental transport adapts');
+    check(!new URL(lrclibUrl).searchParams.has('album_name') && new URL(lrclibUrl).searchParams.get('duration') === '4',
+      'LRCLIB omits album and retains duration');
     globalThis.fetch = async () => Response.json({ syncedLyrics: 'broken', plainLyrics: 'Fallback' });
     check((await createLrclibProvider().fetch(query))?.lines[0].timing === 'none', 'Plain fallback through fetcher');
     globalThis.fetch = async input => {
@@ -122,7 +138,7 @@ export async function runBoundaryChecks() {
     // Cache boundary checks
     check(normalizeString('  Glass  Animals ') === 'glass animals', 'Cache key normalization');
     const cacheKeys = getCacheKeys({ song: 'Heat Waves', artist: 'Glass Animals', spotifyId: '123' });
-    check(cacheKeys.includes('id:123') && cacheKeys.includes('meta:glass animals:heat waves'), 'Cache dual keys');
+    check(cacheKeys.includes('v2:id:123') && cacheKeys.includes('v2:meta:glass animals:heat waves'), 'Versioned cache dual keys');
 
     const testCache = new LyricsCache();
     let networkCalls = 0;

@@ -4,6 +4,7 @@ import { isValidResult } from '../types/types';
 export const POSITIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const NEGATIVE_TTL_MS = 60 * 60 * 1000;           // 1 hour
 export const MEMORY_CAPACITY = 100;
+const CACHE_KEY_VERSION = 'v2';
 
 export interface CacheEntry {
   key: string;
@@ -22,12 +23,12 @@ export function normalizeString(str: string | undefined): string {
 export function getCacheKeys(query: LyricsQuery): string[] {
   const keys: string[] = [];
   if (query.spotifyId?.trim()) {
-    keys.push(`id:${query.spotifyId.trim()}`);
+    keys.push(`${CACHE_KEY_VERSION}:id:${query.spotifyId.trim()}`);
   }
   const artist = normalizeString(query.artist);
   const song = normalizeString(query.song);
   if (artist && song) {
-    keys.push(`meta:${artist}:${song}`);
+    keys.push(`${CACHE_KEY_VERSION}:meta:${artist}:${song}`);
   }
   return keys;
 }
