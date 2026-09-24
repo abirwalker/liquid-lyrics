@@ -42,6 +42,11 @@
   margin: auto !important;
 }
 
+button[data-testid="lyrics-button"],
+.main-nowPlayingBar-lyricsButton {
+  display: none !important;
+}
+
 /* Spotify native dark tooltip styling for Tippy poppers */
 .main-contextMenu-tippy,
 .tippy-box {
@@ -50,7 +55,7 @@
   border-radius: 4px !important;
   padding: 4px 8px !important;
   font-size: 14px !important;
-  font-weight: 700 !important;
+  font-weight: 400 !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
   white-space: nowrap !important;
   max-width: 50ch;
