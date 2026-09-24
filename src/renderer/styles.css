@@ -1,0 +1,214 @@
+.VL-PlaybarBtn,
+.ll-toggle {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  align-self: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  padding: 4px !important;
+  margin: 0 !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: none !important;
+  background-color: transparent !important;
+  color: var(--text-subdued, rgba(255, 255, 255, 0.7)) !important;
+  cursor: pointer;
+  border-radius: 50% !important;
+  line-height: 0 !important;
+  vertical-align: middle !important;
+  box-sizing: border-box !important;
+}
+
+.VL-PlaybarBtn:hover,
+.ll-toggle:hover {
+  color: var(--text-base, #ffffff) !important;
+  background: none !important;
+}
+
+.VL-PlaybarBtn.active,
+.ll-toggle[aria-pressed="true"],
+.ll-toggle.active {
+  color: #1db954 !important;
+  background: none !important;
+}
+
+.VL-PlaybarBtn svg,
+.ll-toggle svg {
+  display: block !important;
+  margin: auto !important;
+}
+
+/* Spotify native dark tooltip styling for Tippy poppers */
+.main-contextMenu-tippy,
+.tippy-box {
+  background-color: #282828 !important;
+  color: #ffffff !important;
+  border-radius: 4px !important;
+  padding: 4px 8px !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+  white-space: nowrap !important;
+  max-width: 50ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: normal !important;
+}
+
+.main-contextMenu-tippyEnter {
+  opacity: 0 !important;
+}
+
+.main-contextMenu-tippyEnterActive {
+  opacity: 1 !important;
+  transition: opacity 0.2s ease-in-out !important;
+}
+
+.tippy-arrow {
+  color: #282828 !important;
+}
+
+#liquid-lyrics-overlay {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+  container-type: inline-size;
+  color: #fff;
+  background: #202024;
+  z-index: 1;
+  font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont,
+    "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ll-background {
+  position: absolute;
+  inset: -32px;
+  width: calc(100% + 64px);
+  height: calc(100% + 64px);
+  filter: blur(24px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .6s;
+}
+
+.ll-background[data-ready="true"] {
+  opacity: 1;
+}
+
+/* Keep white lyrics legible over pale artwork without changing its palette. */
+#liquid-lyrics-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 16%);
+  pointer-events: none;
+}
+
+#liquid-lyrics-overlay .ll-player {
+  position: absolute;
+  inset: 0 max(0px, calc((100% - 1040px) / 2));
+  width: auto;
+  height: auto;
+  z-index: 1;
+  font-family: inherit;
+  font-weight: 700;
+  line-height: 1.22;
+  letter-spacing: -.025em;
+  mix-blend-mode: normal;
+  mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+  --amll-lp-color: #fff;
+  --amll-lp-hover-bg-color: rgb(255 255 255 / 6%);
+  --amll-lp-font-size: clamp(26px, 4cqw, 48px);
+  --lyric-line-padding-x: clamp(24px, 5cqw, 64px);
+}
+
+.ll-player:focus-visible,
+.ll-plain-lyrics:focus-visible {
+  outline: 2px solid rgb(255 255 255 / 70%);
+  outline-offset: -2px;
+}
+
+/* AMLL 0.5.2 private selectors: keep these covered by the browser fixtures. */
+#liquid-lyrics-overlay .FmKaba_lyricLineWrapper {
+  padding-block: .6em;
+}
+
+#liquid-lyrics-overlay .FmKaba_lyricMainLine {
+  overflow-wrap: anywhere;
+}
+
+#liquid-lyrics-overlay .FmKaba_lyricMainLine > span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+#liquid-lyrics-overlay .FmKaba_lyricMainLine > span > span:not(.FmKaba_emphasize) {
+  padding-block-end: .25em;
+  margin-block-end: -.25em;
+  padding-inline: .15em;
+  margin-inline: -.15em;
+}
+
+#liquid-lyrics-overlay .FmKaba_lyricMainLine span.FmKaba_emphasize {
+  padding-block-end: 1.25em;
+  margin-block-end: -1.25em;
+}
+
+#liquid-lyrics-overlay .ll-player:hover .FmKaba_lyricLineWrapper,
+#liquid-lyrics-overlay .ll-player:focus-within .FmKaba_lyricLineWrapper {
+  filter: none !important;
+}
+
+.ll-plain-lyrics {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 48px max(24px, calc((100% - 880px) / 2));
+  font-size: clamp(26px, 4cqw, 48px);
+  font-weight: 700;
+  line-height: 1.22;
+  letter-spacing: -.025em;
+  overflow-wrap: anywhere;
+}
+
+.ll-plain-lyrics p {
+  margin: 0 0 .8em;
+}
+
+.ll-status-msg {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-content: center;
+  padding: 32px;
+  color: rgb(255 255 255 / 75%);
+  font-size: 22px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
+
+#liquid-lyrics-overlay [hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #liquid-lyrics-overlay .ll-player .FmKaba_lyricLineWrapper {
+    filter: none !important;
+  }
+
+  .ll-background {
+    transition: none;
+  }
+}

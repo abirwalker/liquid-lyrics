@@ -15,14 +15,45 @@ declare namespace Spicetify {
 
   interface PlayerAPI {
     data?: PlayerData;
-    addEventListener(event: string, callback: (event?: any) => void): void;
-    removeEventListener(event: string, callback: (event?: any) => void): void;
-    getDuration?(): number;
-    getProgress?(): number;
+    addEventListener(event: string, callback: (event?: unknown) => void): void;
+    removeEventListener(event: string, callback: (event?: unknown) => void): void;
+    getDuration(): number;
+    getProgress(): number;
+    isPlaying(): boolean;
+    seek(position: number): void;
   }
 
-  const Player: PlayerAPI;
-  function showNotification(message: string): void;
+  interface HistoryAPI {
+    location: { pathname: string };
+    push(path: string): void;
+    goBack(): void;
+    listen(callback: () => void): () => void;
+  }
+
+  interface Button {
+    active: boolean;
+    element: HTMLButtonElement;
+    register(): void;
+    deregister(): void;
+  }
+
+  interface API {
+    Player: PlayerAPI;
+    showNotification(message: string, isError?: boolean): void;
+    Platform?: { History?: HistoryAPI };
+    Playbar?: {
+      Button: new (label: string, icon: string, onClick: () => void,
+        disabled?: boolean, active?: boolean, registerOnCreate?: boolean) => Button;
+    };
+    Topbar?: {
+      Button: new (label: string, icon: string, onClick: () => void) => {
+        element: HTMLDivElement;
+        button: HTMLButtonElement;
+      };
+    };
+    Tippy?: (element: Element, options: Record<string, unknown>) => unknown;
+    TippyProps?: Record<string, unknown> & { default?: Record<string, unknown> };
+  }
 }
 
-declare const Spicetify: any;
+declare var Spicetify: Spicetify.API | undefined;

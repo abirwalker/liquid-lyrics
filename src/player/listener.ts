@@ -64,10 +64,26 @@ const defaultLogger: LyricsLogger = {
   error: (msg, ...args) => console.error(msg, ...args),
 };
 
+export interface LyricsControllerOptions {
+  logger?: LyricsLogger;
+  onTrackChangeStarted?: (item: unknown, query: LyricsQuery | null) => void;
+  onLyricsLoaded?: (result: LyricsResult | null, query: LyricsQuery) => void;
+}
+
 export function createLyricsController(
   fetcher: (query: LyricsQuery, signal?: AbortSignal) => Promise<LyricsResult | null>,
-  logger: LyricsLogger = defaultLogger,
+  loggerOrOptions: LyricsLogger | LyricsControllerOptions = defaultLogger,
 ) {
+  const logger: LyricsLogger =
+    typeof (loggerOrOptions as any)?.info === 'function'
+      ? (loggerOrOptions as LyricsLogger)
+      : (loggerOrOptions as LyricsControllerOptions)?.logger ?? defaultLogger;
+
+  const callbacks =
+    typeof (loggerOrOptions as any)?.info === 'function'
+      ? {}
+      : (loggerOrOptions as LyricsControllerOptions);
+
   let activeUri: string | null = null;
   let activeAbort: AbortController | null = null;
 
@@ -87,6 +103,8 @@ export function createLyricsController(
     activeUri = uri;
 
     const query = extractQuery(item);
+    callbacks.onTrackChangeStarted?.(item, query);
+
     if (!query) {
       return;
     }
@@ -121,9 +139,12 @@ export function createLyricsController(
         logger.info(`[Liquid Lyrics] Lyrics provided by: ${result.source}${cacheLabel} (${timingDesc})`);
         logger.info('[Liquid Lyrics] Lyrics data:', result);
       }
+
+      callbacks.onLyricsLoaded?.(result, query);
     } catch (error: any) {
       if (!abort.signal.aborted) {
         logger.error(`[Liquid Lyrics] Error fetching lyrics for "${query.song}":`, error?.message ?? error);
+        callbacks.onLyricsLoaded?.(null, query);
       }
     } finally {
       if (activeAbort === abort) {

@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "spicetify-creator dev",
     "build": "spicetify-creator build",
-    "test:lyrics": "node scripts/test-lyrics.mjs"
+    "test:lyrics": "node scripts/test-lyrics.mjs",
+    "test:renderer": "node scripts/test-renderer.mjs"
   },
   "license": "MIT",
   "devDependencies": {
@@ -13,5 +14,8 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@applemusic-like-lyrics/core": "^0.5.2"
   }
 }
