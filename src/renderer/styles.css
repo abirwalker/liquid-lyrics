@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "Liquid Lyrics Inter";
+  src: url("https://rsms.me/inter/font-files/InterVariable.woff2?v=4.1") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 .VL-PlaybarBtn,
 .ll-toggle {
   display: inline-flex !important;
@@ -88,8 +96,8 @@ button[data-testid="lyrics-button"],
   color: #fff;
   background: #202024;
   z-index: 1;
-  font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont,
-    "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  font-family: "SF Pro Display", "Liquid Lyrics Inter", "Segoe UI Variable Display",
+    "Segoe UI Variable", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -125,13 +133,13 @@ button[data-testid="lyrics-button"],
   z-index: 1;
   font-family: inherit;
   font-weight: 700;
-  line-height: 1.22;
-  letter-spacing: -.025em;
+  line-height: 1.2;
+  letter-spacing: -.015em;
   mix-blend-mode: normal;
   mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
   --amll-lp-color: #fff;
   --amll-lp-hover-bg-color: rgb(255 255 255 / 6%);
-  --amll-lp-font-size: clamp(26px, 4cqw, 48px);
+  --amll-lp-font-size: clamp(28px, 4.8cqw, 58px);
   --lyric-line-padding-x: clamp(24px, 5cqw, 64px);
 }
 
@@ -179,10 +187,10 @@ button[data-testid="lyrics-button"],
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 48px max(24px, calc((100% - 880px) / 2));
-  font-size: clamp(26px, 4cqw, 48px);
+  font-size: clamp(28px, 4.8cqw, 58px);
   font-weight: 700;
-  line-height: 1.22;
-  letter-spacing: -.025em;
+  line-height: 1.2;
+  letter-spacing: -.015em;
   overflow-wrap: anywhere;
 }
 
