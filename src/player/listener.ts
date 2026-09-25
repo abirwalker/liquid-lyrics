@@ -45,6 +45,7 @@ export function extractQuery(item: unknown): LyricsQuery | null {
     if (parts[2]) spotifyId = parts[2];
   }
 
+
   return {
     song,
     artist,
@@ -133,8 +134,11 @@ export function createLyricsController(
         logger.info('[Liquid Lyrics] Lyrics data:', result);
       } else {
         const wordLines = result.lines.filter((l) => l.timing === 'word').length;
+        const syncedLines = result.lines.filter((l) => l.timing === 'line').length;
         const lineCount = result.lines.length;
-        const timingDesc = wordLines > 0 ? `${wordLines}/${lineCount} word-synced lines` : `${lineCount} line-synced lines`;
+        const timingDesc = wordLines > 0 ? `${wordLines}/${lineCount} word-synced lines`
+          : syncedLines > 0 ? `${syncedLines}/${lineCount} line-synced lines`
+            : `${lineCount} static lines`;
         const cacheLabel = result.cached ? ' [cached]' : '';
         logger.info(`[Liquid Lyrics] Lyrics provided by: ${result.source}${cacheLabel} (${timingDesc})`);
         logger.info('[Liquid Lyrics] Lyrics data:', result);

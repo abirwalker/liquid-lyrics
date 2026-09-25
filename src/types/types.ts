@@ -35,6 +35,10 @@ export interface LyricsProvider {
   fetch(query: LyricsQuery, signal?: AbortSignal): Promise<LyricsResult | null>;
 }
 
+export function hasSyncedLyrics(result: LyricsResult): boolean {
+  return !result.instrumental && result.lines.some(line => line.timing !== 'none');
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

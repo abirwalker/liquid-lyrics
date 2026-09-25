@@ -1,6 +1,8 @@
 ﻿import type { LyricsProvider, LyricsQuery, LyricsResult } from '../types/types';
-import { isValidResult } from '../types/types';
+import { hasSyncedLyrics, isValidResult } from '../types/types';
+import { createLyricsPlusProvider } from './providers/lyricsplus';
 import { createBiniLyricsProvider } from './providers/binilyrics';
+import { createAmllProvider } from './providers/amll';
 import { createLrclibProvider } from './providers/lrclib';
 import { createSpotifyLyricsProvider } from './providers/spotify';
 import { defaultCache } from '../storage/cache';
@@ -13,21 +15,29 @@ export async function fetchLyricsChain(
   providers: LyricsProvider[],
   signal?: AbortSignal,
 ): Promise<LyricsResult | null> {
+  let staticFallback: LyricsResult | null = null;
+  let instrumentalFallback: LyricsResult | null = null;
   for (const provider of providers) {
     if (signal?.aborted) return null;
     try {
       const result = await provider.fetch(query, signal);
       if (signal?.aborted) return null;
-      if (isValidResult(result) && result.source === provider.id) return result;
+      if (!isValidResult(result) || result.source !== provider.id) continue;
+      if (hasSyncedLyrics(result)) return result;
+      if (result.instrumental) {
+        instrumentalFallback ??= result;
+        continue;
+      }
+      staticFallback ??= result;
     } catch {
       continue;
     }
   }
-  return null;
+  return staticFallback ?? instrumentalFallback;
 }
 
 export function createDefaultChain(): LyricsProvider[] {
-  return [createBiniLyricsProvider(), createLrclibProvider(), createSpotifyLyricsProvider()];
+  return [createBiniLyricsProvider(), createLyricsPlusProvider(), createAmllProvider(), createLrclibProvider(), createSpotifyLyricsProvider()];
 }
 
 export async function fetchLyrics(
@@ -45,22 +55,24 @@ export async function fetchLyrics(
     return entry;
   };
 
+  let cachedFallback: LyricsResult | null = null;
   if (!query.skipCache && cache) {
     const cached = await readCache(query);
     if (cached.hit) {
-      if (cached.result) return { ...cached.result, cached: true };
+      if (cached.result && hasSyncedLyrics(cached.result)) return { ...cached.result, cached: true };
+      cachedFallback = cached.result;
       if (cleanQ) {
         const cleanCached = await readCache(cleanQ);
-        if (cleanCached.hit) {
-          return cleanCached.result ? { ...cleanCached.result, cached: true } : null;
+        if (cleanCached.hit && cleanCached.result && hasSyncedLyrics(cleanCached.result)) {
+          return { ...cleanCached.result, cached: true };
         }
-      } else {
-        return null;
+        cachedFallback ??= cleanCached.result;
       }
     } else if (cleanQ) {
       const cleanCached = await readCache(cleanQ);
       if (cleanCached.hit && cleanCached.result) {
-        return { ...cleanCached.result, cached: true };
+        if (hasSyncedLyrics(cleanCached.result)) return { ...cleanCached.result, cached: true };
+        cachedFallback = cleanCached.result;
       }
     }
   }
@@ -68,17 +80,18 @@ export async function fetchLyrics(
   let result = await fetchLyricsChain(query, providers, signal);
   if (signal?.aborted) return null;
 
-  if (!result && cleanQ) {
-    result = await fetchLyricsChain(cleanQ, providers, signal);
+  if ((!result || !hasSyncedLyrics(result)) && cleanQ) {
+    const cleanResult = await fetchLyricsChain(cleanQ, providers, signal);
     if (signal?.aborted) return null;
+    if (cleanResult && (!result || hasSyncedLyrics(cleanResult))) result = cleanResult;
   }
 
   if (cache) {
-    await cache.set(query, result);
-    if (cleanQ) {
-      await cache.set(cleanQ, result);
+    if (result !== null) {
+      await cache.set(query, result);
+      if (cleanQ) await cache.set(cleanQ, result);
     }
   }
 
-  return result;
+  return result ?? (cachedFallback ? { ...cachedFallback, cached: true } : null);
 }

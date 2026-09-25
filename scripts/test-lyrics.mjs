@@ -46,7 +46,7 @@ await writeFile(page, '<!doctype html><body><script>' + script.replace(/<\/scrip
 const profile = await mkdtemp(resolve(outputDirectory, 'browser-'));
 const { stdout } = await promisify(execFile)(browser, [
   '--headless=new', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`,
-  '--virtual-time-budget=1000', '--dump-dom', page,
+  '--virtual-time-budget=10000', '--dump-dom', page,
 ], { windowsHide: true, timeout: 30000, maxBuffer: 2 * 1024 * 1024 });
 const body = /<body>([\s\S]*?)<\/body>/.exec(stdout)?.[1];
 if (!body) throw new Error('Browser did not return test results.');

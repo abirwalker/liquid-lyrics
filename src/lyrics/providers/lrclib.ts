@@ -1,8 +1,25 @@
 import type { LyricsProvider, LyricsQuery, LyricsResult } from '../../types/types';
-import { isRecord } from '../../types/types';
+import { hasSyncedLyrics, isRecord } from '../../types/types';
 import { fromLRC, fromPlain } from '../formats';
+import { scoreCandidate } from './matching';
 
-const LRCLIB_API = 'https://lrclib.net/api/get';
+const LRCLIB_API = 'https://lrclib.net/api';
+const HEADERS = { 'Lrclib-Client': 'LiquidLyrics/0.1.0 (https://github.com/abirwalker/liquid-lyrics)' };
+
+async function request(url: string, signal?: AbortSignal): Promise<Response> {
+  const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);
+  let response = await fetch(url, { signal: deadline, credentials: 'omit', headers: HEADERS });
+  if (response.status !== 429) return response;
+  const retryAfter = Number(response.headers.get('Retry-After'));
+  if (!Number.isFinite(retryAfter) || retryAfter < 0 || retryAfter > 3) return response;
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+    const timer = setTimeout(() => { deadline.removeEventListener('abort', onAbort); resolve(); }, retryAfter * 1000);
+    deadline.addEventListener('abort', onAbort, { once: true });
+  });
+  response = await fetch(url, { signal: deadline, credentials: 'omit', headers: HEADERS });
+  return response;
+}
 
 export function adaptLrclib(body: unknown, durationMs?: number): LyricsResult | null {
   if (!isRecord(body)) return null;
@@ -21,16 +38,48 @@ export function createLrclibProvider(): LyricsProvider {
       if (typeof query.durationMs === 'number' && Number.isFinite(query.durationMs) && query.durationMs > 0) {
         params.set('duration', Math.round(query.durationMs / 1000).toString());
       }
-      const timeout = AbortSignal.timeout(12000);
+      const timeout = AbortSignal.timeout(15000);
       const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+      let fallback: LyricsResult | null = null;
       try {
-        const response = await fetch(`${LRCLIB_API}?${params}`, { signal: requestSignal, credentials: 'omit' });
-        if (!response.ok) return null;
-        const result = adaptLrclib(await response.json(), query.durationMs);
-        return requestSignal.aborted ? null : result;
+        const response = await request(`${LRCLIB_API}/get?${params}`, requestSignal);
+        if (response.ok) {
+          const result = adaptLrclib(await response.json(), query.durationMs);
+          if (result && hasSyncedLyrics(result)) return result;
+          fallback = result;
+        }
       } catch {
-        return null;
+        if (requestSignal.aborted) return null;
       }
+
+      const searchParams = new URLSearchParams({ track_name: song, artist_name: artist });
+      if (query.album) searchParams.set('album_name', query.album);
+      const searches = [searchParams];
+      if (query.album) searches.push(new URLSearchParams({ track_name: song, artist_name: artist }));
+      for (const search of searches) {
+        if (requestSignal.aborted) return null;
+        try {
+          const response = await request(`${LRCLIB_API}/search?${search}`, requestSignal);
+          if (!response.ok) continue;
+          const body: unknown = await response.json();
+          if (!Array.isArray(body)) continue;
+          const ranked = body.filter(isRecord).map(item => ({ item, score: scoreCandidate(query, {
+            titles: [String(item.trackName ?? item.name ?? '')],
+            artists: [String(item.artistName ?? '')],
+            albums: [String(item.albumName ?? '')],
+            durationMs: typeof item.duration === 'number' ? item.duration * 1000 : undefined,
+          }) })).filter((entry): entry is { item: Record<string, unknown>; score: number } => entry.score !== null)
+            .sort((a, b) => b.score - a.score).slice(0, 5);
+          for (const { item } of ranked) {
+            const result = adaptLrclib(item, query.durationMs);
+            if (result && hasSyncedLyrics(result)) return result;
+            fallback ??= result;
+          }
+        } catch {
+          if (requestSignal.aborted) return null;
+        }
+      }
+      return fallback;
     },
   };
 }

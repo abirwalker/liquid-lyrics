@@ -18,16 +18,87 @@ function time(value: string | null): number | null {
   return milliseconds;
 }
 
+const BACKGROUND_ROLES = new Set(['x-bg', 'background']);
+
 function role(element: Element): string | null {
-  return element.getAttributeNS('http://www.w3.org/ns/ttml#metadata', 'role');
+  return element.getAttributeNS('http://www.w3.org/ns/ttml#metadata', 'role')
+    ?? element.getAttribute('ttm:role')
+    ?? element.getAttribute('role');
+}
+
+function isBackground(roleName: string | null): boolean {
+  return roleName !== null && BACKGROUND_ROLES.has(roleName.trim().toLowerCase());
+}
+
+function hasBackgroundAncestor(element: Element, paragraph: Element): boolean {
+  for (let current: Element | null = element; current && current !== paragraph; current = current.parentElement) {
+    if (isBackground(role(current))) return true;
+  }
+  return false;
 }
 
 function inheritedAgent(element: Element): string | null {
   for (let current: Element | null = element; current; current = current.parentElement) {
-    const agent = current.getAttributeNS('http://www.w3.org/ns/ttml#metadata', 'agent');
+    const agent = current.getAttributeNS('http://www.w3.org/ns/ttml#metadata', 'agent')
+      ?? current.getAttribute('ttm:agent')
+      ?? current.getAttribute('agent');
     if (agent) return agent;
   }
   return null;
+}
+
+function supportsAmllTiming(xml: Document): boolean {
+  const body = Array.from(xml.getElementsByTagName('*')).find(el => el.localName === 'body');
+  if (body) {
+    if (body.hasAttribute('begin') || body.hasAttribute('end')) return false;
+    let bodyDuration: number | null = null;
+    if (body.hasAttribute('dur')) {
+      try {
+        const dur = time(body.getAttribute('dur'));
+        if (dur === null || dur <= 0) return false;
+        bodyDuration = dur;
+      } catch {
+        return false;
+      }
+    }
+
+    for (const div of Array.from(body.getElementsByTagName('*')).filter(el => el.localName === 'div')) {
+      if (div.hasAttribute('dur')) return false;
+      const divStart = div.hasAttribute('begin') ? time(div.getAttribute('begin')) : null;
+      const divEnd = div.hasAttribute('end') ? time(div.getAttribute('end')) : null;
+      if ((divStart === null) !== (divEnd === null)) return false;
+      if (divStart !== null && divEnd !== null && divEnd <= divStart) return false;
+      if (bodyDuration !== null && divEnd !== null && divEnd > bodyDuration) return false;
+
+      for (const paragraph of Array.from(div.getElementsByTagName('*')).filter(el => el.localName === 'p')) {
+        if (paragraph.hasAttribute('dur')) return false;
+        const lineStart = paragraph.hasAttribute('begin') ? time(paragraph.getAttribute('begin')) : null;
+        const lineEnd = paragraph.hasAttribute('end') ? time(paragraph.getAttribute('end')) : null;
+        if ((lineStart === null) !== (lineEnd === null)) return false;
+        if (lineStart !== null && lineEnd !== null) {
+          if (lineEnd <= lineStart) return false;
+          if (divStart !== null && lineStart < divStart) return false;
+          if (divEnd !== null && lineEnd > divEnd) return false;
+          if (bodyDuration !== null && lineEnd > bodyDuration) return false;
+        }
+
+        for (const span of Array.from(paragraph.getElementsByTagName('*')).filter(el => el.localName === 'span')) {
+          if (span.hasAttribute('dur')) return false;
+          const start = span.hasAttribute('begin') ? time(span.getAttribute('begin')) : null;
+          const end = span.hasAttribute('end') ? time(span.getAttribute('end')) : null;
+          if ((start === null) !== (end === null)) return false;
+          if (start !== null && end !== null) {
+            if (lineStart === null || lineEnd === null || end <= start) return false;
+            if (start < lineStart) return false;
+            if (!hasBackgroundAncestor(span, paragraph) && end > lineEnd) return false;
+            if (divEnd !== null && end > divEnd) return false;
+            if (bodyDuration !== null && end > bodyDuration) return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
 }
 
 export function fromTTML(source: string, input: unknown): LyricsResult | null {
@@ -36,14 +107,18 @@ export function fromTTML(source: string, input: unknown): LyricsResult | null {
     const xml = new DOMParser().parseFromString(input, 'application/xml');
     if (xml.getElementsByTagName('parsererror').length || xml.documentElement.localName !== 'tt') return null;
     const appleTiming = xml.documentElement.getAttributeNS('http://music.apple.com/lyric-ttml-internal', 'timing') ??
-      xml.documentElement.getAttributeNS('http://itunes.apple.com/lyric-ttml-extensions', 'timing');
+      xml.documentElement.getAttributeNS('http://itunes.apple.com/lyric-ttml-extensions', 'timing') ??
+      xml.documentElement.getAttribute('itunes:timing');
     const appleProfile = appleTiming?.toLowerCase() === 'word' || appleTiming?.toLowerCase() === 'line';
     for (const element of Array.from(xml.getElementsByTagName('*'))) {
       if (element.getAttribute('timeContainer') === 'seq') return null;
-      if (element.hasAttribute('dur') && !(appleProfile && element.localName === 'body')) return null;
-      if (['body', 'div'].includes(element.localName) &&
-          (element.hasAttribute('begin') || element.hasAttribute('end')) && !appleProfile) return null;
+      if (source !== 'amll') {
+        if (element.hasAttribute('dur') && !(appleProfile && element.localName === 'body')) return null;
+        if (['body', 'div'].includes(element.localName) &&
+            (element.hasAttribute('begin') || element.hasAttribute('end')) && !appleProfile) return null;
+      }
     }
+    if (source === 'amll' && !supportsAmllTiming(xml)) return null;
     const lines: Line[] = [];
     for (const paragraph of Array.from(xml.getElementsByTagNameNS('*', 'p'))) {
       const startMs = time(paragraph.getAttribute('begin'));
