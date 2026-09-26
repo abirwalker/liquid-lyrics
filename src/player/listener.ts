@@ -45,6 +45,9 @@ export function extractQuery(item: unknown): LyricsQuery | null {
     if (parts[2]) spotifyId = parts[2];
   }
 
+  const imageUri = typeof meta?.image_url === 'string' && meta.image_url.startsWith('spotify:image:')
+    ? meta.image_url
+    : undefined;
 
   return {
     song,
@@ -52,6 +55,7 @@ export function extractQuery(item: unknown): LyricsQuery | null {
     album,
     durationMs,
     spotifyId,
+    imageUri,
   };
 }
 

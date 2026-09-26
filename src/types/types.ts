@@ -27,6 +27,7 @@ export interface LyricsQuery {
   album?: string;
   durationMs?: number;
   spotifyId?: string;
+  imageUri?: string;
   skipCache?: boolean;
 }
 

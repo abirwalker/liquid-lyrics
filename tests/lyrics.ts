@@ -9,6 +9,7 @@ import { isValidResult as validLyrics } from '../src/types/types';
 import type { LyricsResult as Lyrics, LyricsProvider } from '../src/types/types';
 import { fetchLyricsChain, createDefaultChain, fetchLyrics } from '../src/lyrics/chain';
 import { LyricsCache, getCacheKeys, normalizeString } from '../src/storage/cache';
+import { extractQuery } from '../src/player/listener';
 
 export function runIpadChecks(bini: unknown, lrc: unknown) {
   const biniResult = fromTTML('fixture', bini);
@@ -159,7 +160,23 @@ export async function runBoundaryChecks() {
     'Spotify unsynced lyrics adapt without invented timing');
   check(adaptSpotifyLyrics({ lyrics: { syncType: 'SYLLABLE_SYNCED', lines: [{ words: 'Unsupported' }] } }) === null,
     'Unsupported Spotify timing rejected');
+  check(extractQuery({ name: 'Test', artists: [{ name: 'Artist' }], uri: 'spotify:track:track123',
+    metadata: { image_url: 'spotify:image:cover' } })?.imageUri === 'spotify:image:cover',
+    'Player query carries artwork URI for native Spotify lyrics request');
   const originalSpicetify = (globalThis as any).Spicetify;
+  let spotifyHost = '';
+  let spotifyPath = '';
+  let spotifyParams: Record<string, string | boolean> = {};
+  let spotifySend = async (): Promise<{ body: unknown; status: number }> => ({ body: spotifyFixture, status: 200 });
+  const spotifyRequest = {
+    withHost(value: string) { spotifyHost = value; return this; },
+    withPath(value: string) { spotifyPath = value; return this; },
+    withQueryParameters(value: Record<string, string | boolean>) { spotifyParams = value; return this; },
+    withEndpointIdentifier(_value: string) { return this; },
+    withAbortSignal(_value: AbortSignal) { return this; },
+    send() { return spotifySend(); },
+  };
+  const spotifyApi = { Platform: { RequestBuilder: { build: () => spotifyRequest } } };
   try {
     let lrclibUrl = '';
     globalThis.fetch = async input => {
@@ -263,11 +280,12 @@ export async function runBoundaryChecks() {
       fallbackCalls++;
       throw new Error('Line-synced primary result should stop before fallbacks');
     };
-    (globalThis as any).Spicetify = { CosmosAsync: { get: async () => {
+    (globalThis as any).Spicetify = spotifyApi;
+    spotifySend = async () => {
       fallbackCalls++;
-      return spotifyFixture;
-    } } };
-    check((await fetchLyrics({ ...query, spotifyId: 'track123', skipCache: true }, undefined, new LyricsCache()))?.source === 'binilyrics' &&
+      return { body: spotifyFixture, status: 200 };
+    };
+    check((await fetchLyrics({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover', skipCache: true }, undefined, new LyricsCache()))?.source === 'binilyrics' &&
       fallbackCalls === 0, 'Bini line timing stops before Spotify and AMLL');
     let spotifyFallbackCalls = 0;
     globalThis.fetch = async input => {
@@ -278,11 +296,11 @@ export async function runBoundaryChecks() {
       }
       throw new Error('Spotify line timing should stop before AMLL and LRCLIB');
     };
-    (globalThis as any).Spicetify.CosmosAsync.get = async () => {
+    spotifySend = async () => {
       spotifyFallbackCalls++;
-      return spotifyFixture;
+      return { body: spotifyFixture, status: 200 };
     };
-    check((await fetchLyrics({ ...query, spotifyId: 'track123', skipCache: true }, undefined, new LyricsCache()))?.source === 'spotify' &&
+    check((await fetchLyrics({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover', skipCache: true }, undefined, new LyricsCache()))?.source === 'spotify' &&
       spotifyFallbackCalls === 1, 'Static primary lyrics fall through to Spotify line timing');
     (globalThis as any).Spicetify = originalSpicetify;
     let biniAttempts = 0;
@@ -351,19 +369,21 @@ export async function runBoundaryChecks() {
     };
     check((await createLrclibProvider().fetch(query))?.lines[0].timing === 'line',
       'LRCLIB search can replace static exact response');
-    let spotifyUrl = '';
-    (globalThis as any).Spicetify = { CosmosAsync: { get: async (url: string) => {
-      spotifyUrl = url;
-      return spotifyFixture;
-    } } };
-    check((await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: 'track123', durationMs: 5000 }))?.source === 'spotify' &&
-      spotifyUrl.includes('/track/track123?'), 'Spotify provider uses track ID and adapts Cosmos response');
+    (globalThis as any).Spicetify = spotifyApi;
+    spotifySend = async () => ({ body: spotifyFixture, status: 200 });
+    check((await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover', durationMs: 5000 }))?.source === 'spotify' &&
+      spotifyHost === 'https://spclient.wg.spotify.com/color-lyrics/v2' &&
+      spotifyPath === '/track/track123/image/spotify%3Aimage%3Acover' &&
+      spotifyParams.format === 'json' && spotifyParams.vocalRemoval === false,
+      'Spotify provider uses native request builder with track and image IDs');
     check(await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: undefined }) === null,
       'Spotify provider requires track ID');
-    (globalThis as any).Spicetify.CosmosAsync.get = () => new Promise(() => {});
+    check(await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: 'track123' }) === null,
+      'Spotify provider requires image URI');
+    spotifySend = () => new Promise(() => {});
     const spotifyAbort = new AbortController();
     setTimeout(() => spotifyAbort.abort(), 10);
-    check(await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: 'track123' }, spotifyAbort.signal) === null,
+    check(await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover' }, spotifyAbort.signal) === null,
       'Spotify provider stops waiting when caller aborts');
     (globalThis as any).Spicetify = originalSpicetify;
     globalThis.fetch = async () => { throw new Error('network unavailable'); };

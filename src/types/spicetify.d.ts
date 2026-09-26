@@ -30,6 +30,19 @@ declare namespace Spicetify {
     listen(callback: () => void): () => void;
   }
 
+  interface RequestBuilderRequest {
+    withHost(host: string): RequestBuilderRequest;
+    withPath(path: string): RequestBuilderRequest;
+    withQueryParameters(parameters: Record<string, string | boolean>): RequestBuilderRequest;
+    withEndpointIdentifier(identifier: string): RequestBuilderRequest;
+    withAbortSignal(signal: AbortSignal): RequestBuilderRequest;
+    send(): Promise<{ body: unknown; status: number }>;
+  }
+
+  interface RequestBuilderAPI {
+    build(): RequestBuilderRequest;
+  }
+
   interface Button {
     active: boolean;
     element: HTMLButtonElement;
@@ -40,7 +53,13 @@ declare namespace Spicetify {
   interface API {
     Player: PlayerAPI;
     showNotification(message: string, isError?: boolean): void;
-    Platform?: { History?: HistoryAPI };
+    Platform?: {
+      History?: HistoryAPI;
+      RequestBuilder?: {
+        getInstance?(): Spicetify.RequestBuilderAPI;
+        build?(): Spicetify.RequestBuilderRequest;
+      };
+    };
     Playbar?: {
       Button: new (label: string, icon: string, onClick: () => void,
         disabled?: boolean, active?: boolean, registerOnCreate?: boolean) => Button;

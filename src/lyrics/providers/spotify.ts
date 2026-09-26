@@ -84,25 +84,36 @@ export function createSpotifyLyricsProvider(): LyricsProvider {
     id: 'spotify',
     async fetch(query: LyricsQuery, signal?: AbortSignal): Promise<LyricsResult | null> {
       const spotifyId = query.spotifyId?.trim();
-      if (!spotifyId || signal?.aborted) return null;
+      const imageUri = query.imageUri?.trim();
+      if (!spotifyId || !imageUri || signal?.aborted) return null;
 
-      const cosmosGet = (globalThis as any).Spicetify?.CosmosAsync?.get;
-      if (typeof cosmosGet !== 'function') return null;
+      const api = globalThis.Spicetify?.Platform?.RequestBuilder;
+      const builder = typeof api?.getInstance === 'function' ? api.getInstance() : api;
+      if (typeof builder?.build !== 'function') return null;
 
       const timeout = AbortSignal.timeout(10000);
       const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
       let rejectOnAbort: (() => void) | null = null;
       try {
-        const url = `https://spclient.wg.spotify.com/color-lyrics/v2/track/${encodeURIComponent(spotifyId)}?format=json&vocalRemoval=false&market=from_token`;
         const aborted = new Promise<never>((_, reject) => {
           rejectOnAbort = () => reject(new DOMException('Lyrics request aborted', 'AbortError'));
           requestSignal.addEventListener('abort', rejectOnAbort, { once: true });
         });
-        const body: unknown = await Promise.race([Promise.resolve(cosmosGet(url)), aborted]);
+        const path = `/track/${encodeURIComponent(spotifyId)}/image/${encodeURIComponent(imageUri)}`;
+        const response = await Promise.race([
+          builder.build()
+            .withHost('https://spclient.wg.spotify.com/color-lyrics/v2')
+            .withPath(path)
+            .withQueryParameters({ format: 'json', vocalRemoval: false })
+            .withEndpointIdentifier('/track/{trackId}')
+            .withAbortSignal(requestSignal)
+            .send(),
+          aborted,
+        ]);
         if (requestSignal.aborted) return null;
 
-        return adaptSpotifyLyrics(body, query.durationMs);
+        return adaptSpotifyLyrics(response.body, query.durationMs);
       } catch {
         return null;
       } finally {
