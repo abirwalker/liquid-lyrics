@@ -2,7 +2,7 @@ import { DomLyricPlayer, MeshGradientRenderer, LyricLineMouseEvent, type LyricLi
 import '@applemusic-like-lyrics/core/style.css';
 import './styles.css';
 import type { LyricsResult } from '../types/types';
-import { convertToAmllLines } from './adapter';
+import { convertToAmllLines, type DisplayLyricLine } from './adapter';
 import { isRecord } from '../types/types';
 
 export class LyricsView {
@@ -25,6 +25,7 @@ export class LyricsView {
   private lastPlaying: boolean | null = null;
   private lastProgress: number | null = null;
   private lines: LyricLine[] = [];
+  private inferredBackingCues: Array<{ element: HTMLElement; wrapper: HTMLElement; startMs: number; endMs: number }> = [];
   private isOpen = false;
   private animFrameId: number | null = null;
   private lastFrameTime = performance.now();
@@ -92,6 +93,7 @@ export class LyricsView {
     globalThis.Spicetify?.Player.seek(time);
     this.player.resetScroll();
     this.player.setCurrentTime(time, true);
+    this.updateInferredBacking(time);
     this.lastProgress = time;
   }
 
@@ -116,6 +118,7 @@ export class LyricsView {
 
     if (result.lines.length && result.lines.every((line) => line.timing === 'none')) {
       this.lines = [];
+      this.inferredBackingCues = [];
       this.player.setLyricLines([]);
       this.player.getElement().hidden = true;
       this.statusEl.hidden = true;
@@ -143,7 +146,14 @@ export class LyricsView {
     this.statusEl.hidden = true;
     this.player.resetScroll();
     this.player.setLyricLines(lines, progress);
+    this.inferredBackingCues = this.player.currentLyricGroups.flatMap((group) => {
+      const backing = group.bgLine?.getLine() as DisplayLyricLine | undefined;
+      if (!backing?.inferredBacking || !group.bgLine || !group.bgWrapper) return [];
+      return [{ element: group.bgLine.getElement(), wrapper: group.bgWrapper,
+        startMs: backing.words[0].startTime, endMs: backing.words[backing.words.length - 1].endTime }];
+    });
     this.player.setCurrentTime(progress, true);
+    this.updateInferredBacking(progress);
     this.player.update(0);
     this.lastPlaying = null;
   }
@@ -154,6 +164,7 @@ export class LyricsView {
 
   private showStatus(message: string) {
     this.lines = [];
+    this.inferredBackingCues = [];
     this.plainLyrics.hidden = true;
     this.plainLyrics.replaceChildren();
     this.player.getElement().hidden = true;
@@ -320,6 +331,19 @@ export class LyricsView {
     if (this.animFrameId === null) this.animFrameId = requestAnimationFrame(this.onFrame);
   }
 
+  private updateInferredBacking(progress: number) {
+    for (const cue of this.inferredBackingCues) {
+      const finished = progress >= cue.endMs;
+      if (finished && !cue.wrapper.classList.contains('ll-backing-finished')) {
+        cue.wrapper.style.setProperty('--ll-backing-height', `${cue.wrapper.offsetHeight}px`);
+      }
+      cue.element.classList.toggle('ll-backing-singing', progress >= cue.startMs && progress < cue.endMs);
+      cue.element.classList.toggle('ll-backing-finished', finished);
+      cue.wrapper.classList.toggle('ll-backing-finished', finished);
+      cue.wrapper.classList.toggle('ll-backing-past', progress >= cue.endMs + 450);
+    }
+  }
+
   private stopLoop() {
     if (this.animFrameId === null) return;
     cancelAnimationFrame(this.animFrameId);
@@ -349,6 +373,7 @@ export class LyricsView {
       this.player.setCurrentTime(progress, seeking);
       this.lastProgress = progress;
       this.player.update(deltaMs);
+      this.updateInferredBacking(progress);
     }
     this.animFrameId = requestAnimationFrame(this.onFrame);
   };

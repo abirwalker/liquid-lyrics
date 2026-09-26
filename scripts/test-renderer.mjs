@@ -91,6 +91,104 @@ try {
       await writeFile(resolve(out, `lyrics-${width}.png`), Buffer.from(shot.data, 'base64'));
     }
   }
+  await evaluate('fixture.setProgress(5500); fixture.view.setLyrics(fixture.backgroundFixture())');
+  await wait(400);
+  assert.equal(await evaluate("document.querySelectorAll('.FmKaba_lyricBgLine').length"), 1, 'one backing line');
+  assert.equal(await evaluate("document.querySelector('.FmKaba_lyricBgLine .FmKaba_lyricMainLine').textContent"), 'How long?');
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('.FmKaba_lyricBgLine')).opacity"), '0');
+  await evaluate('fixture.setProgress(2200)');
+  await wait(120);
+  const enteringOpacity = Number(await evaluate("getComputedStyle(document.querySelector('.FmKaba_lyricBgLine')).opacity"));
+  assert.ok(enteringOpacity > 0 && enteringOpacity < .4, `backing line fade: ${enteringOpacity}`);
+  await wait(450);
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('.FmKaba_lyricBgLine')).opacity"), '0.4');
+  const backingShot = await command('Page.captureScreenshot', { format: 'png' });
+  await writeFile(resolve(out, 'lyrics-background.png'), Buffer.from(backingShot.data, 'base64'));
+  for (const first of [true, false]) {
+    await evaluate(`fixture.setProgress(800); fixture.view.setLyrics(fixture.bracketFixture(${first}))`);
+    await wait(600);
+    const placement = await evaluate("(() => { const bg = document.querySelector('.FmKaba_lyricBgLine'); const group = bg.closest('.FmKaba_lyricLineWrapper'); return { text: bg.textContent, top: group.firstElementChild.contains(bg), active: bg.classList.contains('FmKaba_active') }; })()");
+    assert.equal(placement.text, 'How long?');
+    assert.equal(placement.top, first, 'backing position follows bracket order');
+    assert.equal(placement.active, true, 'backing appears with lead group');
+    const placementShot = await command('Page.captureScreenshot', { format: 'png' });
+    await writeFile(resolve(out, `lyrics-line-background-${first ? 'above' : 'below'}.png`), Buffer.from(placementShot.data, 'base64'));
+    await evaluate('fixture.setProgress(3100)');
+    await wait(500);
+    assert.equal(await evaluate("document.querySelector('.FmKaba_lyricBgLine').classList.contains('FmKaba_active')"), true,
+      'line-synced backing remains visible through its parent line');
+    await evaluate('fixture.setProgress(5500)');
+    await wait(500);
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.FmKaba_lyricBgLine')).opacity"), '0',
+      'line-synced backing fades when its parent line ends');
+  }
+  await evaluate('fixture.setProgress(3000); fixture.view.setLyrics(fixture.sunflowerFixture())');
+  await wait(600);
+  assert.equal(await evaluate("document.querySelector('.FmKaba_lyricBgLine .FmKaba_lyricMainLine').textContent"), 'Yeah, yeah');
+  assert.equal(await evaluate("document.querySelector('.FmKaba_lyricBgLine').classList.contains('FmKaba_active')"), true);
+  assert.equal(await evaluate("document.querySelectorAll('.FmKaba_lyricBgLine .FmKaba_lyricMainLine > span').length > 0"), true);
+  const sunflowerShot = await command('Page.captureScreenshot', { format: 'png' });
+  await writeFile(resolve(out, 'lyrics-word-background-sunflower.png'), Buffer.from(sunflowerShot.data, 'base64'));
+  await evaluate('fixture.setProgress(14500); fixture.view.setLyrics(fixture.standaloneBackingFixture())');
+  await wait(500);
+  const separateRows = await evaluate("fixture.view.player.currentLyricGroups.map(group => ({ lead: group.mainLine.getLine().words.map(word => word.word).join(''), backing: group.bgLine?.getLine().words.map(word => word.word).join('') ?? null, leadEnd: group.mainLine.getLine().words.at(-1).endTime, backingStart: group.bgLine?.getLine().words[0].startTime ?? null, backingEnd: group.bgLine?.getLine().words.at(-1).endTime ?? null }))");
+  assert.equal(separateRows.length, 3, 'standalone vocals share their preceding lyric groups');
+  assert.deepEqual(separateRows.map(row => row.backing), ['Backing one', 'Backing two', null]);
+  assert.equal(separateRows[0].leadEnd, 16311);
+  assert.equal(separateRows[0].backingStart, 16564);
+  assert.equal(separateRows[1].backingEnd, 79276);
+  const standaloneState = () => evaluate("(() => { const line = [...document.querySelectorAll('.FmKaba_lyricBgLine')].find(el => el.textContent?.includes('Backing one')); return line ? { active: line.classList.contains('FmKaba_active'), opacity: Number(getComputedStyle(line).opacity), font: parseFloat(getComputedStyle(line).fontSize), mask: line.querySelector('.FmKaba_lyricMainLine > span')?.style.maskPosition ?? '' } : null; })()");
+  const beforeBacking = await standaloneState();
+  assert.equal(beforeBacking?.active, true, 'background row appears with the lead without a blank slot');
+  assert.equal(beforeBacking?.opacity, .4);
+  await evaluate('fixture.setProgress(17100)');
+  await wait(550);
+  const duringBacking = await standaloneState();
+  assert.equal(duringBacking?.active, true);
+  assert.equal(duringBacking?.opacity, .75, 'background vocal brightens during its own timed phrase');
+  assert.ok(duringBacking.font < 58, 'standalone vocal uses smaller type');
+  const standaloneShot = await command('Page.captureScreenshot', { format: 'png' });
+  await writeFile(resolve(out, 'lyrics-standalone-background.png'), Buffer.from(standaloneShot.data, 'base64'));
+  await evaluate('fixture.setProgress(19100)');
+  await wait(550);
+  assert.equal((await standaloneState())?.opacity, 0, 'standalone vocal fades after its own end');
+  await evaluate('fixture.setProgress(17000)');
+  await wait(550);
+  assert.equal((await standaloneState())?.opacity, .75, 'seek back restores standalone vocal');
+  await evaluate('fixture.setProgress(79100)');
+  await wait(550);
+  const overlappingRows = await evaluate("fixture.view.player.currentLyricGroups.slice(1, 3).map(group => ({ active: group.isActive, start: group.mainLine.getLine().startTime, end: group.mainLine.getLine().endTime }))");
+  assert.equal(overlappingRows[0].active, true, 'backing stays active through its supplied end');
+  assert.equal(overlappingRows[0].end, 79276);
+  assert.equal(overlappingRows[1].start, 78959);
+  const backingLayout = () => evaluate("(() => { const group = fixture.view.player.currentLyricGroups[1]; return { height: group.element.getBoundingClientRect().height, wrapperHeight: group.bgWrapper.getBoundingClientRect().height, position: getComputedStyle(group.bgWrapper).position }; })()");
+  const beforeBackingEnd = await backingLayout();
+  assert.ok(beforeBackingEnd.wrapperHeight > 10, 'the active backing row occupies space');
+  const overlapShot = await command('Page.captureScreenshot', { format: 'png' });
+  await writeFile(resolve(out, 'lyrics-standalone-background-overlap.png'), Buffer.from(overlapShot.data, 'base64'));
+  await evaluate('fixture.setProgress(79500)');
+  await wait(120);
+  const collapsingBacking = await backingLayout();
+  assert.ok(collapsingBacking.height < beforeBackingEnd.height && collapsingBacking.wrapperHeight > 0,
+    `backing row eases out instead of snapping shut: ${JSON.stringify({ beforeBackingEnd, collapsingBacking })}`);
+  await wait(450);
+  const afterOverlap = await evaluate("fixture.view.player.currentLyricGroups.slice(1, 3).map(group => ({ active: group.isActive, start: group.mainLine.getLine().startTime, end: group.mainLine.getLine().endTime }))");
+  assert.equal(await evaluate("getComputedStyle(fixture.view.player.currentLyricGroups[1].bgLine.getElement()).opacity"), '0',
+    `backing fades after its own end while the next lead continues: ${JSON.stringify(afterOverlap)}`);
+  const afterBackingEnd = await backingLayout();
+  assert.equal(afterBackingEnd.wrapperHeight, 0, 'finished backing no longer occupies lyric group height');
+  assert.ok(afterBackingEnd.height < beforeBackingEnd.height - 10,
+    `the lyric group contracts at the backing end: ${JSON.stringify({ beforeBackingEnd, afterBackingEnd })}`);
+  await evaluate('fixture.setProgress(79100)');
+  await wait(550);
+  const restoredBacking = await backingLayout();
+  assert.equal(restoredBacking.position, 'relative', 'seeking backward restores backing layout');
+  assert.ok(restoredBacking.height > afterBackingEnd.height + 10);
+  await evaluate('fixture.setProgress(1700); fixture.view.setLyrics(fixture.forwardBackingFixture())');
+  await wait(600);
+  const forwardPlacement = await evaluate("(() => { const groups = fixture.view.player.currentLyricGroups; const next = groups[1]; return { count: groups.length, backing: next.bgLine?.getLine().words[0].word, top: next.element.firstElementChild.contains(next.bgLine.getElement()), active: next.bgLine.getElement().classList.contains('FmKaba_active') }; })()");
+  assert.deepEqual(forwardPlacement, { count: 2, backing: 'Come closer tonight', top: true, active: true },
+    'a stronger following-line word match places backing above that line');
   await evaluate("fixture.view.setLyrics(fixture.fixture()); fixture.setProgress(12500)");
   await wait(300);
   await evaluate("document.querySelector('.FmKaba_lyricLineWrapper').click()");

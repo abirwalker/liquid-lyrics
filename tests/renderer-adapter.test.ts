@@ -191,6 +191,153 @@ function runAdapterTests() {
   assert.ok(amllPlain[0].startTime < amllPlain[1].startTime);
   assert.ok(amllPlain[0].endTime <= amllPlain[1].startTime);
 
+  const backingResult: LyricsResult = {
+    source: 'amll', instrumental: false, lines: [{
+      text: "Slittin' my throat (How long?)",
+      timing: 'word', startMs: 1000, endMs: 3000, agent: null,
+      segments: [
+        { text: "Slittin' ", startMs: 1000, endMs: 1800, role: null },
+        { text: 'my throat ', startMs: 1800, endMs: 3000, role: null },
+        { text: '(How ', startMs: 2400, endMs: 3100, role: 'x-bg' },
+        { text: 'long?)', startMs: 3100, endMs: 3900, role: 'x-bg' },
+      ],
+    }],
+  };
+  const backingLines = convertToAmllLines(backingResult);
+  assert.equal(backingLines.length, 2);
+  assert.equal(backingLines[0].isBG, false);
+  assert.equal(backingLines[1].isBG, true);
+  assert.equal(backingLines[0].words.map((word) => word.word).join(''), "Slittin' my throat ");
+  assert.equal(backingLines[1].words.map((word) => word.word).join(''), 'How long?');
+  assert.equal(backingLines[1].words[0].startTime, 2400);
+  assert.equal(backingLines[1].endTime, 3900);
+
+  const bracketedResult: LyricsResult = { source: 'lrclib', instrumental: false, lines: [
+    { text: '(How long?) Slittin my throat', timing: 'line', startMs: 0, endMs: 4000, agent: null,
+      segments: [{ text: '(How long?) Slittin my throat', startMs: null, endMs: null, role: null }] },
+    { text: 'Slittin my throat (How long?)', timing: 'line', startMs: 5000, endMs: 9000, agent: null,
+      segments: [{ text: 'Slittin my throat (How long?)', startMs: null, endMs: null, role: null }] },
+  ] };
+  const bracketedLines = convertToAmllLines(bracketedResult);
+  assert.equal(bracketedLines.length, 4);
+  assert.deepEqual(bracketedLines.map((line) => line.isBG), [false, true, false, true]);
+  assert.equal(bracketedLines[0].words[0].word, 'Slittin my throat');
+  assert.equal(bracketedLines[1].words[0].word, 'How long?');
+  assert.ok(bracketedLines[1].words[0].startTime < bracketedLines[0].words[0].startTime);
+  assert.equal(bracketedLines[1].endTime, bracketedLines[0].endTime);
+  assert.equal(bracketedLines[3].words[0].word, 'How long?');
+  assert.equal(bracketedLines[3].words[0].startTime, bracketedLines[2].words[0].startTime);
+
+  const boundedResult: LyricsResult = { source: 'lrclib', instrumental: false, lines: [
+    { text: 'Lead (backing)', timing: 'line', startMs: 1000, endMs: null, agent: null,
+      segments: [{ text: 'Lead (backing)', startMs: null, endMs: null, role: null }] },
+    { text: 'Next', timing: 'line', startMs: 3000, endMs: null, agent: null,
+      segments: [{ text: 'Next', startMs: null, endMs: null, role: null }] },
+  ] };
+  const boundedLines = convertToAmllLines(boundedResult);
+  assert.equal(boundedLines[0].endTime, 3000);
+  assert.equal(boundedLines[1].endTime, 3000);
+
+  const interiorBrackets: LyricsResult = { source: 'lrclib', instrumental: false, lines: [
+    { text: 'Lead (aside) continues', timing: 'line', startMs: 0, endMs: 3000, agent: null,
+      segments: [{ text: 'Lead (aside) continues', startMs: null, endMs: null, role: null }] },
+  ] };
+  assert.equal(convertToAmllLines(interiorBrackets).length, 1);
+  const untaggedWord: LyricsResult = { source: 'lyricsplus', instrumental: false, lines: [
+    { text: 'Lead (aside)', timing: 'word', startMs: 0, endMs: 3000, agent: null,
+      segments: [{ text: 'Lead ', startMs: 0, endMs: 1500, role: null },
+        { text: '(aside)', startMs: 1500, endMs: 3000, role: null }] },
+  ] };
+  const shortBacking = convertToAmllLines(untaggedWord);
+  assert.equal(shortBacking.length, 2);
+  assert.equal(shortBacking[1].isBG, true);
+  assert.equal(shortBacking[1].words[0].word, 'aside');
+  assert.equal(shortBacking[1].words[0].startTime, 1500);
+
+  const sunflower: LyricsResult = { source: 'lyricsplus', instrumental: false, lines: [
+    { text: "You're the sunflower (Yeah, yeah)", timing: 'word', startMs: 0, endMs: 4200, agent: null,
+      segments: [
+        { text: "You're ", startMs: 0, endMs: 800, role: null },
+        { text: 'the ', startMs: 800, endMs: 1200, role: null },
+        { text: 'sunflower ', startMs: 1200, endMs: 2700, role: null },
+        { text: '(Yeah, ', startMs: 2700, endMs: 3400, role: null },
+        { text: 'yeah)', startMs: 3400, endMs: 4200, role: null },
+      ] },
+  ] };
+  const sunflowerLines = convertToAmllLines(sunflower);
+  assert.equal(sunflowerLines.length, 2);
+  assert.equal(sunflowerLines[1].isBG, true);
+  assert.deepEqual(sunflowerLines[1].words.map((word) => word.word), ['Yeah, ', 'yeah']);
+  assert.equal(sunflowerLines[1].words[0].startTime, 2700);
+  assert.equal(sunflowerLines[1].words[1].endTime, 4200);
+
+  const prefixWord: LyricsResult = { source: 'lyricsplus', instrumental: false, lines: [
+    { text: '(Oh) lead', timing: 'word', startMs: 0, endMs: 2200, agent: null,
+      segments: [{ text: '(Oh) ', startMs: 0, endMs: 800, role: null },
+        { text: 'lead', startMs: 800, endMs: 2200, role: null }] },
+  ] };
+  const prefixLines = convertToAmllLines(prefixWord);
+  assert.equal(prefixLines.length, 2);
+  assert.ok(prefixLines[1].words[0].startTime < prefixLines[0].words[0].startTime);
+
+  const attachedShortWord: LyricsResult = { source: 'lyricsplus', instrumental: false, lines: [
+    { text: 'lead(Oh)', timing: 'word', startMs: 0, endMs: 1200, agent: null,
+      segments: [{ text: 'lead(Oh)', startMs: 0, endMs: 1200, role: null }] },
+  ] };
+  const attachedLines = convertToAmllLines(attachedShortWord);
+  assert.equal(attachedLines.length, 2);
+  assert.equal(attachedLines[1].isBG, true);
+  assert.equal(attachedLines[1].words[0].word, 'Oh');
+
+  const separateBacking: LyricsResult = { source: 'binilyrics', instrumental: false, lines: [
+    { text: 'Lead one', timing: 'line', startMs: 14178, endMs: 16311, agent: null,
+      segments: [{ text: 'Lead one', startMs: null, endMs: null, role: null }] },
+    { text: '(Backing one)', timing: 'line', startMs: 16564, endMs: 18563, agent: null,
+      segments: [{ text: '(Backing one)', startMs: null, endMs: null, role: null }] },
+    { text: 'Lead two', timing: 'line', startMs: 74219, endMs: 76071, agent: null,
+      segments: [{ text: 'Lead two', startMs: null, endMs: null, role: null }] },
+    { text: '(Backing two)', timing: 'line', startMs: 76578, endMs: 79276, agent: null,
+      segments: [{ text: '(Backing two)', startMs: null, endMs: null, role: null }] },
+    { text: 'Next lead', timing: 'line', startMs: 78959, endMs: 80891, agent: null,
+      segments: [{ text: 'Next lead', startMs: null, endMs: null, role: null }] },
+  ] };
+  const separateLines = convertToAmllLines(separateBacking);
+  assert.equal(separateLines.length, 5);
+  assert.deepEqual(separateLines.map(line => line.isBG), [false, true, false, true, false]);
+  assert.equal(separateLines[1].words[0].word, 'Backing one');
+  assert.equal(separateLines[1].startTime, 16564);
+  assert.equal(separateLines[1].endTime, 18563);
+  assert.equal(separateLines[3].words[0].word, 'Backing two');
+  assert.equal(separateLines[3].endTime, 79276);
+  assert.ok(separateLines[3].endTime > separateLines[4].startTime);
+
+  const separateWord: LyricsResult = { source: 'lyricsplus', instrumental: false, lines: [
+    { text: 'Lead', timing: 'word', startMs: 0, endMs: 900, agent: null,
+      segments: [{ text: 'Lead', startMs: 0, endMs: 900, role: null }] },
+    { text: '(Oh yeah)', timing: 'word', startMs: 1000, endMs: 2200, agent: null,
+      segments: [{ text: '(Oh ', startMs: 1000, endMs: 1500, role: null },
+        { text: 'yeah)', startMs: 1500, endMs: 2200, role: null }] },
+  ] };
+  const separateWordLines = convertToAmllLines(separateWord);
+  assert.equal(separateWordLines[1].isBG, true);
+  assert.deepEqual(separateWordLines[1].words.map(word => word.word), ['Oh ', 'yeah']);
+  assert.equal(separateWordLines[1].words[1].endTime, 2200);
+
+  const forwardMatch: LyricsResult = { source: 'binilyrics', instrumental: false, lines: [
+    { text: 'Distant thought', timing: 'line', startMs: 0, endMs: 1000, agent: null,
+      segments: [{ text: 'Distant thought', startMs: null, endMs: null, role: null }] },
+    { text: '(Come closer tonight)', timing: 'line', startMs: 1200, endMs: 1800, agent: null,
+      segments: [{ text: '(Come closer tonight)', startMs: null, endMs: null, role: null }] },
+    { text: 'Come closer tonight', timing: 'line', startMs: 1600, endMs: 2800, agent: null,
+      segments: [{ text: 'Come closer tonight', startMs: null, endMs: null, role: null }] },
+  ] };
+  const forwardLines = convertToAmllLines(forwardMatch);
+  assert.deepEqual(forwardLines.map(line => [line.words[0].word, line.isBG]), [
+    ['Distant thought', false], ['Come closer tonight', false], ['Come closer tonight', true],
+  ]);
+  assert.ok(forwardLines[2].words[0].startTime < forwardLines[1].words[0].startTime,
+    'a matching following lead places the backing vocal above it');
+
   console.log('All AMLL renderer adapter tests passed successfully!');
 }
 

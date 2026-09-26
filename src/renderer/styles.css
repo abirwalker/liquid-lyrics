@@ -154,6 +154,48 @@ button[data-testid="lyrics-button"],
   padding-block: .6em;
 }
 
+#liquid-lyrics-overlay .FmKaba_lyricBgLine {
+  opacity: 0;
+  transition: opacity .45s ease;
+}
+
+#liquid-lyrics-overlay .FmKaba_lyricBgLine.FmKaba_active {
+  opacity: .4;
+}
+
+#liquid-lyrics-overlay .FmKaba_lyricBgLine.ll-backing-singing.FmKaba_active {
+  opacity: .75;
+}
+
+#liquid-lyrics-overlay .FmKaba_lyricBgLine.ll-backing-finished {
+  opacity: 0;
+}
+
+#liquid-lyrics-overlay .FmKaba_bgWrapper.ll-backing-finished {
+  overflow: hidden;
+  pointer-events: none;
+  animation: ll-backing-collapse .45s ease-in-out forwards;
+}
+
+#liquid-lyrics-overlay .FmKaba_bgWrapper.ll-backing-past {
+  height: 0;
+  opacity: 0;
+  animation: none;
+}
+
+@keyframes ll-backing-collapse {
+  from { height: var(--ll-backing-height); opacity: 1; }
+  to { height: 0; opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #liquid-lyrics-overlay .FmKaba_bgWrapper.ll-backing-finished {
+    height: 0;
+    opacity: 0;
+    animation: none;
+  }
+}
+
 #liquid-lyrics-overlay .FmKaba_lyricMainLine {
   overflow-wrap: anywhere;
 }

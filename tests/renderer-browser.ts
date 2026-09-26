@@ -45,6 +45,63 @@ function fixture(timing: 'line' | 'word' | 'none' = 'line'): LyricsResult {
     })) };
   }) };
 }
+function backgroundFixture(): LyricsResult {
+  return { source: 'amll', instrumental: false, lines: [
+    { text: "Slittin' my throat (How long?)", timing: 'word', startMs: 0, endMs: 4000, agent: null, segments: [
+      { text: "Slittin' my throat ", startMs: 0, endMs: 2600, role: null },
+      { text: '(How long?)', startMs: 1800, endMs: 3600, role: 'x-bg' },
+    ] },
+    { text: 'Next verse', timing: 'line', startMs: 5000, endMs: 8000, agent: null,
+      segments: [{ text: 'Next verse', startMs: null, endMs: null, role: null }] },
+  ] };
+}
+function bracketFixture(first: boolean): LyricsResult {
+  const text = first ? "(How long?) Slittin' my throat" : "Slittin' my throat (How long?)";
+  return { source: 'lyricsplus', instrumental: false, lines: [
+    { text, timing: 'line', startMs: 0, endMs: 4000, agent: null,
+      segments: [{ text, startMs: null, endMs: null, role: null }] },
+    { text: 'Next verse', timing: 'line', startMs: 5000, endMs: 8000, agent: null,
+      segments: [{ text: 'Next verse', startMs: null, endMs: null, role: null }] },
+  ] };
+}
+function sunflowerFixture(): LyricsResult {
+  return { source: 'lyricsplus', instrumental: false, lines: [
+    { text: "You're the sunflower (Yeah, yeah)", timing: 'word', startMs: 0, endMs: 4200,
+      agent: null, segments: [
+        { text: "You're ", startMs: 0, endMs: 800, role: null },
+        { text: 'the ', startMs: 800, endMs: 1200, role: null },
+        { text: 'sunflower ', startMs: 1200, endMs: 2700, role: null },
+        { text: '(Yeah, ', startMs: 2700, endMs: 3400, role: null },
+        { text: 'yeah)', startMs: 3400, endMs: 4200, role: null },
+      ] },
+    { text: 'Next verse', timing: 'line', startMs: 5000, endMs: 8000, agent: null,
+      segments: [{ text: 'Next verse', startMs: null, endMs: null, role: null }] },
+  ] };
+}
+function standaloneBackingFixture(): LyricsResult {
+  const rows: Array<[string, number, number]> = [
+    ['Lead one', 14178, 16311],
+    ['(Backing one)', 16564, 18563],
+    ['Lead two', 74219, 76071],
+    ['(Backing two)', 76578, 79276],
+    ['Next lead', 78959, 80891],
+  ];
+  return { source: 'binilyrics', instrumental: false, lines: rows.map(([text, startMs, endMs]) => ({
+    text, timing: 'line', startMs, endMs, agent: null,
+    segments: [{ text, startMs: null, endMs: null, role: null }],
+  })) };
+}
+function forwardBackingFixture(): LyricsResult {
+  const rows: Array<[string, number, number]> = [
+    ['Distant thought', 0, 1000],
+    ['(Come closer tonight)', 1200, 1800],
+    ['Come closer tonight', 1600, 2800],
+  ];
+  return { source: 'binilyrics', instrumental: false, lines: rows.map(([text, startMs, endMs]) => ({
+    text, timing: 'line', startMs, endMs, agent: null,
+    segments: [{ text, startMs: null, endMs: null, role: null }],
+  })) };
+}
 view.mount();
 view.setLyrics(fixture());
 
@@ -71,7 +128,9 @@ function measure() {
 }
 
 Object.assign(window, { fixture: {
-  view, fixture, measure, seeks, visibility,
+  view, fixture, backgroundFixture, bracketFixture, sunflowerFixture, standaloneBackingFixture,
+  forwardBackingFixture,
+  measure, seeks, visibility,
   setProgress: (time: number) => { progress = time; },
   setPlaying: (state: boolean) => { playing = state; },
   resize: (height: number) => { document.querySelector<HTMLElement>('.main-view-container')!.style.height = `${height}px`; },
