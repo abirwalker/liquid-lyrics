@@ -110,15 +110,18 @@ export function fromTTML(source: string, input: unknown): LyricsResult | null {
       xml.documentElement.getAttributeNS('http://itunes.apple.com/lyric-ttml-extensions', 'timing') ??
       xml.documentElement.getAttribute('itunes:timing');
     const appleProfile = appleTiming?.toLowerCase() === 'word' || appleTiming?.toLowerCase() === 'line';
+    const lrcTiming = xml.documentElement.getAttributeNS('http://lrc.red/lyric-ttml-internal', 'timing');
+    const lrcProfile = source === 'binilyrics' &&
+      (lrcTiming?.toLowerCase() === 'word' || lrcTiming?.toLowerCase() === 'line');
     for (const element of Array.from(xml.getElementsByTagName('*'))) {
       if (element.getAttribute('timeContainer') === 'seq') return null;
-      if (source !== 'amll') {
+      if (source !== 'amll' && !lrcProfile) {
         if (element.hasAttribute('dur') && !(appleProfile && element.localName === 'body')) return null;
         if (['body', 'div'].includes(element.localName) &&
             (element.hasAttribute('begin') || element.hasAttribute('end')) && !appleProfile) return null;
       }
     }
-    if (source === 'amll' && !supportsAmllTiming(xml)) return null;
+    if ((source === 'amll' || lrcProfile) && !supportsAmllTiming(xml)) return null;
     const lines: Line[] = [];
     for (const paragraph of Array.from(xml.getElementsByTagNameNS('*', 'p'))) {
       const startMs = time(paragraph.getAttribute('begin'));

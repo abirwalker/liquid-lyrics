@@ -54,6 +54,12 @@ export function runChecks(liveTTML?: string) {
   check(fromTTML('binilyrics', '<tt><p begin="3" end="1">Wrong</p></tt>') === null, 'Reversed timing rejected');
   check(fromTTML('binilyrics', '<tt><p begin="1" end="2">Short</p></tt>')?.lines[0].timing === 'line', 'TTML without timed spans is line-timed');
   check(fromTTML('binilyrics', '<tt><p begin="1" dur="2s">Unsupported</p></tt>') === null, 'Unsupported timing profile fails explicitly');
+  const lrcTtml = '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:lrc="http://lrc.red/lyric-ttml-internal" lrc:timing="Line"><body dur="4:08.827"><div begin="17.782" end="50.766"><p begin="17.782" end="21.492">Runaway</p></div></body></tt>';
+  check(fromTTML('binilyrics', lrcTtml)?.lines[0].timing === 'line', 'Bini accepts lrc.red container timing');
+  check(fromTTML('binilyrics', lrcTtml.replace(' end="50.766"', ' end="16.000"')) === null,
+    'Bini rejects invalid lrc.red container bounds');
+  check(fromTTML('binilyrics', lrcTtml.replace(' lrc:timing="Line"', '')) === null,
+    'Bini requires the lrc.red timing marker for container timing');
   const nested = fromTTML('binilyrics', '<tt><p begin="1" end="2"><span begin="1" end="2"><span>Nested</span> text</span></p></tt>');
   check(nested?.lines[0].text === 'Nested text', 'Nested spans preserve text');
   const live = fromTTML('fixture', liveTTML ?? ttml);
@@ -163,6 +169,44 @@ export async function runBoundaryChecks() {
       new URL(lyricsPlusUrl).searchParams.get('title') === 'Test' &&
       new URL(lyricsPlusUrl).searchParams.get('duration') === '200',
     'LyricsPlus metadata request yields word timing');
+    const biniLookupRequests: string[] = [];
+    globalThis.fetch = async input => {
+      const url = new URL(String(input));
+      biniLookupRequests.push(url.href);
+      if (url.hostname === 'lyrics-api.binimum.org' && url.pathname === '/') {
+        return Response.json({ results: [{ track_name: 'Test', artist_name: 'Artist', duration: 201,
+          lyricsUrl: 'https://example.com/lookup.ttml' }] });
+      }
+      if (url.href === 'https://example.com/lookup.ttml') return new Response(ttml);
+      throw new Error('A successful lookup should not search again');
+    };
+    check((await createBiniLyricsProvider().fetch({ ...query, album: 'Different release', durationMs: 200500 }))?.lines[0].timing === 'line' &&
+      biniLookupRequests.filter(url => url.includes('lyrics-api.binimum.org')).length === 1 &&
+      new URL(biniLookupRequests[0]).searchParams.get('track') === 'Test' &&
+      new URL(biniLookupRequests[0]).searchParams.get('artist') === 'Artist' &&
+      new URL(biniLookupRequests[0]).searchParams.get('duration') === '201' &&
+      !new URL(biniLookupRequests[0]).searchParams.has('album'),
+    'Bini sends one duration-aware track lookup without album on a synced hit');
+    const biniFallbackRequests: string[] = [];
+    globalThis.fetch = async input => {
+      const url = new URL(String(input));
+      biniFallbackRequests.push(url.href);
+      if (url.hostname === 'lyrics-api.binimum.org') {
+        return Response.json({ results: url.pathname === '/'
+          ? [{ track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/static.ttml' }]
+          : [
+            { track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/static.ttml' },
+            { track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/synced.ttml' },
+          ] });
+      }
+      if (url.pathname === '/static.ttml') return new Response('<tt><p>Static</p></tt>');
+      if (url.pathname === '/synced.ttml') return new Response(ttml);
+      throw new Error('Unexpected Bini URL');
+    };
+    check((await createBiniLyricsProvider().fetch(query))?.lines[0].timing === 'line' &&
+      biniFallbackRequests.filter(url => url.includes('lyrics-api.binimum.org')).length === 2 &&
+      biniFallbackRequests.filter(url => url === 'https://example.com/static.ttml').length === 1,
+    'Bini searches after a static lookup without refetching its lyric file');
     let biniAttempts = 0;
     globalThis.fetch = async input => {
       if (String(input).includes('lyrics-api.binimum.org')) {

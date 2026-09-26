@@ -74,38 +74,45 @@ export function createBiniLyricsProvider(): LyricsProvider {
 
       const timeout = AbortSignal.timeout(18000);
       const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-      const found: unknown[] = [];
-      for (const term of createBiniSearchQueries(query, plan)) {
+      const lookup = new URL(BINILYRICS_API);
+      lookup.searchParams.set('track', plan.song);
+      lookup.searchParams.set('artist', plan.artist);
+      if (query.durationMs && Number.isFinite(query.durationMs) && query.durationMs > 0) {
+        lookup.searchParams.set('duration', String(Math.round(query.durationMs / 1000)));
+      }
+      const requests = [lookup.href, ...createBiniSearchQueries(query, plan)
+        .map(term => `${BINILYRICS_API}/getLyrics?q=${encodeURIComponent(term)}`)];
+      let staticFallback: LyricsResult | null = null;
+      const seen = new Set<string>();
+
+      for (const requestUrl of requests) {
         if (requestSignal.aborted) return null;
+        let found: unknown[];
         try {
           const deadline = AbortSignal.any([requestSignal, AbortSignal.timeout(5000)]);
-          const response = await fetch(`${BINILYRICS_API}/getLyrics?q=${encodeURIComponent(term)}`, {
+          const response = await fetch(requestUrl, {
             signal: deadline, credentials: 'omit',
           });
           if (!response.ok) continue;
           const body: unknown = await response.json();
           const results = isRecord(body) ? body.results : null;
-          if (Array.isArray(results)) found.push(...results);
+          if (!Array.isArray(results)) continue;
+          found = results;
         } catch {
           if (requestSignal.aborted) return null;
+          continue;
         }
-      }
 
-      const unique = new Map<string, unknown>();
-      for (const value of found) {
-        if (isBiniItem(value)) unique.set(JSON.stringify([
-          value.track_name, value.artist_name, value.duration, value.lyricsUrl,
-        ]), value);
-      }
-      let staticFallback: LyricsResult | null = null;
-      const seen = new Set<string>();
-      for (const item of selectBiniItems([...unique.values()], query).slice(0, 5)) {
+        let attempted = 0;
+        for (const item of selectBiniItems(found, query)) {
           if (requestSignal.aborted) return null;
           try {
             const url = new URL(item.lyricsUrl ?? '');
             if (url.protocol !== 'https:' || url.username || url.password) continue;
             if (seen.has(url.href)) continue;
+            if (attempted >= 5) break;
             seen.add(url.href);
+            attempted++;
             const deadline = AbortSignal.any([requestSignal, AbortSignal.timeout(5000)]);
             const lyricsResponse = await fetch(url, { signal: deadline, credentials: 'omit' });
             if (!lyricsResponse.ok) continue;
@@ -118,6 +125,7 @@ export function createBiniLyricsProvider(): LyricsProvider {
           } catch {
             if (requestSignal.aborted) return null;
           }
+        }
       }
       return staticFallback;
     },
