@@ -100,6 +100,12 @@ export async function runBoundaryChecks() {
     { id: 'synced', fetch: async () => synced },
     { id: 'word', fetch: async () => word },
   ]))?.source === 'word', 'Later word timing supersedes earlier line timing');
+  let laterProviderCalled = false;
+  check((await fetchLyricsChain(query, [
+    { id: 'synced', fetch: async () => synced },
+    { id: 'word', fetch: async () => { laterProviderCalled = true; return word; } },
+  ], undefined, true))?.source === 'synced' && !laterProviderCalled,
+  'Line-timed fallback stops before later providers');
   const staticProviders: LyricsProvider[] = [
     { id: 'custom', fetch: async () => good },
     { id: 'synced', fetch: async () => synced },
@@ -116,7 +122,8 @@ export async function runBoundaryChecks() {
   const controller = new AbortController();
   check(await fetchLyricsChain(query, [{ id: 'custom', fetch: async () => { controller.abort(); return good; } }], controller.signal) === null, 'Late response after cancellation rejected');
   check(await fetchLyricsChain(query, [{ id: 'wrong', fetch: async () => good }]) === null, 'Incorrect provenance rejected');
-  check(createDefaultChain().map(provider => provider.id).join(',') === 'binilyrics,lyricsplus,amll,lrclib,spotify', 'Bini first, LyricsPlus second');
+  check(createDefaultChain().map(provider => provider.id).join(',') === 'binilyrics,lyricsplus,spotify,amll,lrclib',
+    'Word-first providers precede line-timed fallbacks');
   check(scoreCandidate(query, { titles: ['Test'], artists: ['Artist'] }) !== null, 'Matching title and artist accepted');
   check(scoreCandidate(query, { titles: ['Test (Live)'], artists: ['Artist'] }) === null, 'Unexpected live version rejected');
   check(scoreCandidate({ ...query, durationMs: 200000 },
@@ -241,6 +248,43 @@ export async function runBoundaryChecks() {
     };
     check((await fetchLyrics({ ...query, skipCache: true }, undefined, new LyricsCache()))?.source === 'lyricsplus',
       'LyricsPlus word timing supersedes Bini line timing');
+    let fallbackCalls = 0;
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.startsWith('https://lyrics-api.binimum.org/')) {
+        return Response.json({ results: [{ track_name: 'Test', artist_name: 'Artist',
+          lyricsUrl: 'https://example.com/line.ttml' }] });
+      }
+      if (url === 'https://example.com/line.ttml') return new Response(ttml);
+      if (url.startsWith('https://lyricsplus.binimum.org/')) {
+        return Response.json({ ...lyricsPlusFixture, lyrics: [{ time: 1000, duration: 700,
+          text: 'Hello world', syllabus: [] }] });
+      }
+      fallbackCalls++;
+      throw new Error('Line-synced primary result should stop before fallbacks');
+    };
+    (globalThis as any).Spicetify = { CosmosAsync: { get: async () => {
+      fallbackCalls++;
+      return spotifyFixture;
+    } } };
+    check((await fetchLyrics({ ...query, spotifyId: 'track123', skipCache: true }, undefined, new LyricsCache()))?.source === 'binilyrics' &&
+      fallbackCalls === 0, 'Bini line timing stops before Spotify and AMLL');
+    let spotifyFallbackCalls = 0;
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.startsWith('https://lyrics-api.binimum.org/')) return Response.json({ results: [] });
+      if (url.startsWith('https://lyricsplus.binimum.org/')) {
+        return Response.json({ ...lyricsPlusFixture, lyrics: [{ text: 'Hello world', syllabus: [] }] });
+      }
+      throw new Error('Spotify line timing should stop before AMLL and LRCLIB');
+    };
+    (globalThis as any).Spicetify.CosmosAsync.get = async () => {
+      spotifyFallbackCalls++;
+      return spotifyFixture;
+    };
+    check((await fetchLyrics({ ...query, spotifyId: 'track123', skipCache: true }, undefined, new LyricsCache()))?.source === 'spotify' &&
+      spotifyFallbackCalls === 1, 'Static primary lyrics fall through to Spotify line timing');
+    (globalThis as any).Spicetify = originalSpicetify;
     let biniAttempts = 0;
     globalThis.fetch = async input => {
       if (String(input).includes('lyrics-api.binimum.org')) {
