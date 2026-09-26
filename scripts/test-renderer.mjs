@@ -189,6 +189,45 @@ try {
   const forwardPlacement = await evaluate("(() => { const groups = fixture.view.player.currentLyricGroups; const next = groups[1]; return { count: groups.length, backing: next.bgLine?.getLine().words[0].word, top: next.element.firstElementChild.contains(next.bgLine.getElement()), active: next.bgLine.getElement().classList.contains('FmKaba_active') }; })()");
   assert.deepEqual(forwardPlacement, { count: 2, backing: 'Come closer tonight', top: true, active: true },
     'a stronger following-line word match places backing above that line');
+  await evaluate('fixture.setProgress(49000); fixture.view.setLyrics(fixture.rockabyeShapeFixture())');
+  await wait(550);
+  const rockabyeState = () => evaluate("(() => { const group = fixture.view.player.currentLyricGroups[1]; return { opacity: getComputedStyle(group.bgLine.getElement()).opacity, wrapperHeight: group.bgWrapper.getBoundingClientRect().height }; })()");
+  assert.equal((await rockabyeState()).opacity, '0.75', 'line-timed bracket backing brightens with its lead');
+  for (let time = 49100; time <= 52000; time += 100) {
+    await evaluate(`fixture.setProgress(${time})`);
+    await wait(30);
+  }
+  assert.deepEqual(await rockabyeState(), { opacity: '0', wrapperHeight: 0 },
+    'line-timed bracket backing is gone before the following lead finishes');
+  await evaluate('fixture.setPlaying(true); fixture.setProgress(166000); fixture.view.setLyrics(fixture.pausedBackingFixture())');
+  await wait(550);
+  const pausedBackingState = () => evaluate("fixture.view.player.currentLyricGroups.slice(0, 2).map(group => ({ active: group.isActive, bgActive: group.bgWrapper?.classList.contains('FmKaba_bgWrapperActive'), height: group.element.getBoundingClientRect().height, wrapperHeight: group.bgWrapper?.getBoundingClientRect().height, wrapperPosition: group.bgWrapper ? getComputedStyle(group.bgWrapper).position : null, bgOpacity: group.bgLine ? getComputedStyle(group.bgLine.getElement()).opacity : null }))");
+  const playingBacking = await pausedBackingState();
+  assert.deepEqual(playingBacking.map(row => row.wrapperPosition), ['absolute', 'absolute'],
+    'inactive backing rows do not occupy lyric layout while playing');
+  await evaluate('fixture.setPlaying(false)');
+  await wait(550);
+  const pausedBacking = await pausedBackingState();
+  assert.deepEqual(pausedBacking.map(row => row.wrapperPosition), ['absolute', 'absolute'],
+    'pause keeps inactive backing rows outside lyric layout');
+  assert.ok(pausedBacking.every((row, index) => Math.abs(row.height - playingBacking[index].height) < 2),
+    `pause changed lyric spacing: ${JSON.stringify({ playingBacking, pausedBacking })}`);
+  await evaluate('fixture.setPlaying(true)');
+  await wait(550);
+  const resumedBacking = await pausedBackingState();
+  assert.ok(resumedBacking.every((row, index) => Math.abs(row.height - playingBacking[index].height) < 2),
+    'resume preserves the same lyric spacing');
+  await evaluate('fixture.setProgress(159000)');
+  await wait(550);
+  const currentBacking = (await pausedBackingState())[0];
+  assert.equal(currentBacking.bgActive, true, 'current backing stays in its lyric group');
+  assert.equal(currentBacking.wrapperPosition, 'relative');
+  await evaluate('fixture.setPlaying(false)');
+  await wait(550);
+  const pausedCurrentBacking = (await pausedBackingState())[0];
+  assert.equal(pausedCurrentBacking.wrapperPosition, 'relative', 'pausing keeps the current vocal in place');
+  assert.ok(Math.abs(pausedCurrentBacking.height - currentBacking.height) < 2);
+  await evaluate('fixture.setPlaying(true)');
   await evaluate("fixture.view.setLyrics(fixture.fixture()); fixture.setProgress(12500)");
   await wait(300);
   await evaluate("document.querySelector('.FmKaba_lyricLineWrapper').click()");

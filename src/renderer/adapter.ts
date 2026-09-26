@@ -40,8 +40,9 @@ export function convertToAmllLines(result: LyricsResult | null): DisplayLyricLin
     if (bracketed && line.timing === 'line') {
       const lead = convertLine({ ...line, text: bracketed.lead,
         segments: [{ text: bracketed.lead, startMs: null, endMs: null, role: null }] }, rawLines[i + 1], i, false);
-      const backing = convertLine({ ...line, text: bracketed.background,
+      const backing: DisplayLyricLine = convertLine({ ...line, text: bracketed.background,
         segments: [{ text: bracketed.background, startMs: null, endMs: null, role: null }] }, rawLines[i + 1], i, true);
+      backing.inferredBacking = true;
       backing.startTime = lead.startTime;
       backing.endTime = lead.endTime;
       backing.words[0].endTime = lead.endTime;

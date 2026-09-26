@@ -102,6 +102,35 @@ function forwardBackingFixture(): LyricsResult {
     segments: [{ text, startMs: null, endMs: null, role: null }],
   })) };
 }
+function rockabyeShapeFixture(): LyricsResult {
+  const rows: Array<[string, number, number]> = [
+    ['Lead one (Backing one)', 43732, 46616],
+    ['Lead two (Backing two)', 46626, 50654],
+    ['Lead three', 50826, 53055],
+    ['Lead four (Backing four)', 53197, 56044],
+    ['Next section', 56452, 59967],
+  ];
+  return { source: 'binilyrics', instrumental: false, lines: rows.map(([text, startMs, endMs]) => ({
+    text, timing: 'line', startMs, endMs, agent: null,
+    segments: [{ text, startMs: null, endMs: null, role: null }],
+  })) };
+}
+function pausedBackingFixture(): LyricsResult {
+  return { source: 'binilyrics', instrumental: false, lines: [
+    { text: 'Lead one (Backing one)', timing: 'word', startMs: 157308, endMs: 160904, agent: null,
+      segments: [
+        { text: 'Lead one ', startMs: 157308, endMs: 158600, role: null },
+        { text: '(Backing one)', startMs: 158600, endMs: 160904, role: null },
+      ] },
+    { text: '(Backing two) Lead two', timing: 'word', startMs: 160877, endMs: 164682, agent: null,
+      segments: [
+        { text: '(Backing two) ', startMs: 160877, endMs: 162000, role: null },
+        { text: 'Lead two', startMs: 162000, endMs: 164682, role: null },
+      ] },
+    { text: 'Next line', timing: 'word', startMs: 166552, endMs: 168302, agent: null,
+      segments: [{ text: 'Next line', startMs: 166552, endMs: 168302, role: null }] },
+  ] };
+}
 view.mount();
 view.setLyrics(fixture());
 
@@ -129,7 +158,7 @@ function measure() {
 
 Object.assign(window, { fixture: {
   view, fixture, backgroundFixture, bracketFixture, sunflowerFixture, standaloneBackingFixture,
-  forwardBackingFixture,
+  forwardBackingFixture, rockabyeShapeFixture, pausedBackingFixture,
   measure, seeks, visibility,
   setProgress: (time: number) => { progress = time; },
   setPlaying: (state: boolean) => { playing = state; },

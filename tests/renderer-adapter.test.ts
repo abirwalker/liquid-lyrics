@@ -225,8 +225,10 @@ function runAdapterTests() {
   assert.equal(bracketedLines[1].words[0].word, 'How long?');
   assert.ok(bracketedLines[1].words[0].startTime < bracketedLines[0].words[0].startTime);
   assert.equal(bracketedLines[1].endTime, bracketedLines[0].endTime);
+  assert.equal(bracketedLines[1].inferredBacking, true);
   assert.equal(bracketedLines[3].words[0].word, 'How long?');
   assert.equal(bracketedLines[3].words[0].startTime, bracketedLines[2].words[0].startTime);
+  assert.equal(bracketedLines[3].inferredBacking, true);
 
   const boundedResult: LyricsResult = { source: 'lrclib', instrumental: false, lines: [
     { text: 'Lead (backing)', timing: 'line', startMs: 1000, endMs: null, agent: null,
