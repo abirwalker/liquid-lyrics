@@ -1,5 +1,5 @@
 ﻿import type { LyricsProvider, LyricsQuery, LyricsResult } from '../types/types';
-import { hasSyncedLyrics, isValidResult } from '../types/types';
+import { isValidResult } from '../types/types';
 import { createLyricsPlusProvider } from './providers/lyricsplus';
 import { createBiniLyricsProvider } from './providers/binilyrics';
 import { createAmllProvider } from './providers/amll';
@@ -10,30 +10,33 @@ import { cleanTitle, getPrimaryArtist, createCleanQuery } from './cleaner';
 
 export { cleanTitle, getPrimaryArtist, createCleanQuery };
 
+function lyricQuality(result: LyricsResult | null): number {
+  if (!result) return -1;
+  if (result.instrumental) return 0;
+  if (result.lines.some(line => line.timing === 'word')) return 3;
+  if (result.lines.some(line => line.timing === 'line')) return 2;
+  return 1;
+}
+
 export async function fetchLyricsChain(
   query: LyricsQuery,
   providers: LyricsProvider[],
   signal?: AbortSignal,
 ): Promise<LyricsResult | null> {
-  let staticFallback: LyricsResult | null = null;
-  let instrumentalFallback: LyricsResult | null = null;
+  let best: LyricsResult | null = null;
   for (const provider of providers) {
     if (signal?.aborted) return null;
     try {
       const result = await provider.fetch(query, signal);
       if (signal?.aborted) return null;
       if (!isValidResult(result) || result.source !== provider.id) continue;
-      if (hasSyncedLyrics(result)) return result;
-      if (result.instrumental) {
-        instrumentalFallback ??= result;
-        continue;
-      }
-      staticFallback ??= result;
+      if (lyricQuality(result) === 3) return result;
+      if (lyricQuality(result) > lyricQuality(best)) best = result;
     } catch {
       continue;
     }
   }
-  return staticFallback ?? instrumentalFallback;
+  return best;
 }
 
 export function createDefaultChain(): LyricsProvider[] {
@@ -57,33 +60,26 @@ export async function fetchLyrics(
 
   let cachedFallback: LyricsResult | null = null;
   if (!query.skipCache && cache) {
-    const cached = await readCache(query);
-    if (cached.hit) {
-      if (cached.result && hasSyncedLyrics(cached.result)) return { ...cached.result, cached: true };
-      cachedFallback = cached.result;
-      if (cleanQ) {
-        const cleanCached = await readCache(cleanQ);
-        if (cleanCached.hit && cleanCached.result && hasSyncedLyrics(cleanCached.result)) {
-          return { ...cleanCached.result, cached: true };
-        }
-        cachedFallback ??= cleanCached.result;
-      }
-    } else if (cleanQ) {
-      const cleanCached = await readCache(cleanQ);
-      if (cleanCached.hit && cleanCached.result) {
-        if (hasSyncedLyrics(cleanCached.result)) return { ...cleanCached.result, cached: true };
-        cachedFallback = cleanCached.result;
-      }
+    for (const candidate of cleanQ ? [query, cleanQ] : [query]) {
+      const cached = await readCache(candidate);
+      if (!cached.hit || !cached.result) continue;
+      if (lyricQuality(cached.result) === 3) return { ...cached.result, cached: true };
+      if (lyricQuality(cached.result) > lyricQuality(cachedFallback)) cachedFallback = cached.result;
     }
+    if (cachedFallback && lyricQuality(cachedFallback) === 2) return { ...cachedFallback, cached: true };
   }
 
   let result = await fetchLyricsChain(query, providers, signal);
   if (signal?.aborted) return null;
 
-  if ((!result || !hasSyncedLyrics(result)) && cleanQ) {
+  if (lyricQuality(result) < 3 && cleanQ) {
     const cleanResult = await fetchLyricsChain(cleanQ, providers, signal);
     if (signal?.aborted) return null;
-    if (cleanResult && (!result || hasSyncedLyrics(cleanResult))) result = cleanResult;
+    if (lyricQuality(cleanResult) > lyricQuality(result)) result = cleanResult;
+  }
+
+  if (cachedFallback && lyricQuality(cachedFallback) > lyricQuality(result)) {
+    return { ...cachedFallback, cached: true };
   }
 
   if (cache) {
@@ -93,5 +89,5 @@ export async function fetchLyrics(
     }
   }
 
-  return result ?? (cachedFallback ? { ...cachedFallback, cached: true } : null);
+  return result;
 }

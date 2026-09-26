@@ -104,6 +104,7 @@ export function createBiniLyricsProvider(): LyricsProvider {
         }
 
         let attempted = 0;
+        let lineFallback: LyricsResult | null = null;
         for (const item of selectBiniItems(found, query)) {
           if (requestSignal.aborted) return null;
           try {
@@ -119,13 +120,15 @@ export function createBiniLyricsProvider(): LyricsProvider {
             const result = adaptBiniLyrics(await lyricsResponse.text());
             if (requestSignal.aborted) return null;
             if (result) {
-              if (hasSyncedLyrics(result)) return result;
-              staticFallback ??= result;
+              if (result.lines.some(line => line.timing === 'word')) return result;
+              if (hasSyncedLyrics(result)) lineFallback ??= result;
+              else staticFallback ??= result;
             }
           } catch {
             if (requestSignal.aborted) return null;
           }
         }
+        if (lineFallback) return lineFallback;
       }
       return staticFallback;
     },

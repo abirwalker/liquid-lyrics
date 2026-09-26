@@ -95,6 +95,11 @@ export async function runBoundaryChecks() {
   ];
   check((await fetchLyricsChain(query, providers))?.source === 'custom', 'Unknown provider needs no engine changes');
   const synced = fromLRC('synced', '[00:01]A short song')!;
+  const word = fromTTML('word', '<tt><p begin="1" end="2"><span begin="1" end="2">A short song</span></p></tt>')!;
+  check((await fetchLyricsChain(query, [
+    { id: 'synced', fetch: async () => synced },
+    { id: 'word', fetch: async () => word },
+  ]))?.source === 'word', 'Later word timing supersedes earlier line timing');
   const staticProviders: LyricsProvider[] = [
     { id: 'custom', fetch: async () => good },
     { id: 'synced', fetch: async () => synced },
@@ -187,6 +192,23 @@ export async function runBoundaryChecks() {
       new URL(biniLookupRequests[0]).searchParams.get('duration') === '201' &&
       !new URL(biniLookupRequests[0]).searchParams.has('album'),
     'Bini sends one duration-aware track lookup without album on a synced hit');
+    const biniWordRequests: string[] = [];
+    globalThis.fetch = async input => {
+      const url = new URL(String(input));
+      biniWordRequests.push(url.href);
+      if (url.hostname === 'lyrics-api.binimum.org' && url.pathname === '/') {
+        return Response.json({ results: [
+          { track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/line.ttml' },
+          { track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/word.ttml' },
+        ] });
+      }
+      if (url.pathname === '/line.ttml') return new Response(ttml);
+      if (url.pathname === '/word.ttml') return new Response('<tt><p begin="1" end="2"><span begin="1" end="2">Short</span></p></tt>');
+      throw new Error('Bini should finish after the lookup candidates');
+    };
+    check((await createBiniLyricsProvider().fetch(query))?.lines[0].timing === 'word' &&
+      biniWordRequests.filter(url => url.includes('lyrics-api.binimum.org')).length === 1,
+    'Bini prefers word timing over an earlier line-timed lookup candidate');
     const biniFallbackRequests: string[] = [];
     globalThis.fetch = async input => {
       const url = new URL(String(input));
@@ -207,6 +229,18 @@ export async function runBoundaryChecks() {
       biniFallbackRequests.filter(url => url.includes('lyrics-api.binimum.org')).length === 2 &&
       biniFallbackRequests.filter(url => url === 'https://example.com/static.ttml').length === 1,
     'Bini searches after a static lookup without refetching its lyric file');
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.startsWith('https://lyrics-api.binimum.org/')) {
+        return Response.json({ results: [{ track_name: 'Test', artist_name: 'Artist',
+          lyricsUrl: 'https://example.com/line.ttml' }] });
+      }
+      if (url === 'https://example.com/line.ttml') return new Response(ttml);
+      if (url.startsWith('https://lyricsplus.binimum.org/')) return Response.json(lyricsPlusFixture);
+      throw new Error('Word timing should stop the chain before later providers');
+    };
+    check((await fetchLyrics({ ...query, skipCache: true }, undefined, new LyricsCache()))?.source === 'lyricsplus',
+      'LyricsPlus word timing supersedes Bini line timing');
     let biniAttempts = 0;
     globalThis.fetch = async input => {
       if (String(input).includes('lyrics-api.binimum.org')) {
@@ -298,7 +332,7 @@ export async function runBoundaryChecks() {
     // Cache boundary checks
     check(normalizeString('  Glass  Animals ') === 'glass animals', 'Cache key normalization');
     const cacheKeys = getCacheKeys({ song: 'Heat Waves', artist: 'Glass Animals', spotifyId: '123' });
-    check(cacheKeys.includes('v3:id:123') && cacheKeys.includes('v3:meta:glass animals:heat waves'), 'Versioned cache dual keys');
+    check(cacheKeys.includes('v4:id:123') && cacheKeys.includes('v4:meta:glass animals:heat waves'), 'Versioned cache dual keys');
 
     const testCache = new LyricsCache();
     let networkCalls = 0;
@@ -315,7 +349,8 @@ export async function runBoundaryChecks() {
 
     // Second call: hits cache without network
     const call2 = await fetchLyrics(query, undefined, testCache);
-    check(call2?.source === 'lrclib' && call2.cached === true && networkCalls === callsAfterFirst, 'Repeat fetch served from cache');
+    check(call2?.source === 'lrclib' && call2.cached === true && networkCalls === callsAfterFirst,
+      'Line timing chosen after provider search is cached');
 
     // Third call with skipCache: hits network
     const call3 = await fetchLyrics({ ...query, skipCache: true }, undefined, testCache);
@@ -346,7 +381,7 @@ export async function runBoundaryChecks() {
     const callsAfterClean = cleanCalls;
     const cachedCleanResult = await fetchLyrics(remastered, undefined, cleanCache);
     check(cachedCleanResult?.cached === true && cachedCleanResult.lines[0].timing === 'line' && cleanCalls === callsAfterClean,
-      'Cleaned synced result is cached for the original track query');
+      'Cleaned line timing is cached for the original track query');
   } finally {
     globalThis.fetch = originalFetch;
     (globalThis as any).Spicetify = originalSpicetify;

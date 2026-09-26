@@ -1,11 +1,11 @@
 import type { LyricsQuery, LyricsResult } from '../types/types';
-import { hasSyncedLyrics, isValidResult } from '../types/types';
+import { isValidResult } from '../types/types';
 
 export const POSITIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const NEGATIVE_TTL_MS = 60 * 60 * 1000;           // 1 hour
 export const STATIC_TTL_MS = 24 * 60 * 60 * 1000;
 export const MEMORY_CAPACITY = 100;
-const CACHE_KEY_VERSION = 'v3';
+const CACHE_KEY_VERSION = 'v4';
 
 export interface CacheEntry {
   key: string;
@@ -246,7 +246,7 @@ export class LyricsCache {
     const now = Date.now();
     let ttl = POSITIVE_TTL_MS;
     if (result === null) ttl = NEGATIVE_TTL_MS;
-    else if (!result.instrumental && !hasSyncedLyrics(result)) ttl = STATIC_TTL_MS;
+    else if (!result.instrumental && !result.lines.some(line => line.timing === 'word')) ttl = STATIC_TTL_MS;
     const expiresAt = now + ttl;
 
     for (const key of keys) {
