@@ -110,6 +110,14 @@ try {
   await wait(700);
   assert.equal(await evaluate("document.querySelector('.ll-background').dataset.ready"), 'true',
     'background remains visible through the album transition');
+  const spotifyInterludeRows = await evaluate("fixture.spotifyInterludeFixture().lines.map(line => line.text)");
+  assert.deepEqual(spotifyInterludeRows, ['First line', 'Next line']);
+  await evaluate('fixture.setProgress(6000); fixture.view.setLyrics(fixture.spotifyInterludeFixture())');
+  await wait(200);
+  const spotifyLineTexts = await evaluate("[...document.querySelectorAll('.FmKaba_lyricMainLine')].map(line => line.textContent)");
+  assert.ok(!spotifyLineTexts.includes('♪'), `Spotify music note rendered as a lyric line: ${spotifyLineTexts}`);
+  assert.equal(await evaluate("document.querySelector('.FmKaba_interludeDots')?.classList.contains('FmKaba_enabled')"), true,
+    'Spotify music note leaves a timed gap for AMLL interlude dots');
   await evaluate('fixture.setProgress(5500); fixture.view.setLyrics(fixture.backgroundFixture())');
   await wait(400);
   assert.equal(await evaluate("document.querySelectorAll('.FmKaba_lyricBgLine').length"), 1, 'one backing line');

@@ -1,6 +1,10 @@
 ﻿import type { LyricsProvider, LyricsQuery, LyricsResult, LyricsLine } from '../../types/types';
 import { isRecord, isValidResult } from '../../types/types';
 
+export function isSpotifyInterludeText(text: string): boolean {
+  return /^[\u266A\u266B\u266C\u2669]+$/u.test(text.trim());
+}
+
 export function adaptSpotifyLyrics(body: unknown, durationMs?: number): LyricsResult | null {
   if (!isRecord(body) || !isRecord(body.lyrics)) return null;
 
@@ -18,6 +22,7 @@ export function adaptSpotifyLyrics(body: unknown, durationMs?: number): LyricsRe
 
   const lines: LyricsLine[] = [];
   const boundaries: number[] = [];
+  const interludeStarts: number[] = [];
 
   for (const rawLine of rawLines) {
     if (!isRecord(rawLine)) continue;
@@ -36,6 +41,12 @@ export function adaptSpotifyLyrics(body: unknown, durationMs?: number): LyricsRe
     } else {
       const rawStart = Number(rawLine.startTimeMs);
       if (!Number.isSafeInteger(rawStart) || rawStart < 0) continue;
+
+      if (isSpotifyInterludeText(text)) {
+        boundaries.push(rawStart);
+        interludeStarts.push(rawStart);
+        continue;
+      }
 
       const rawEnd = Number(rawLine.endTimeMs);
       const parsedEnd = Number.isSafeInteger(rawEnd) && rawEnd > rawStart ? rawEnd : null;
@@ -57,6 +68,7 @@ export function adaptSpotifyLyrics(body: unknown, durationMs?: number): LyricsRe
   if (isLineSynced) {
     lines.sort((a, b) => a.startMs! - b.startMs!);
     boundaries.sort((a, b) => a - b);
+    interludeStarts.sort((a, b) => a - b);
 
     for (const line of lines) {
       if (line.endMs === null) {
@@ -66,6 +78,10 @@ export function adaptSpotifyLyrics(body: unknown, durationMs?: number): LyricsRe
           (typeof durationMs === 'number' && Number.isSafeInteger(durationMs) && durationMs > line.startMs!
             ? durationMs
             : null);
+      }
+      const interludeStart = interludeStarts.find(start => start > line.startMs!);
+      if (interludeStart !== undefined && (line.endMs === null || line.endMs > interludeStart)) {
+        line.endMs = interludeStart;
       }
     }
   }

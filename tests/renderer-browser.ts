@@ -1,4 +1,5 @@
 import { LyricsView } from '../src/renderer/lyrics-view';
+import { adaptSpotifyLyrics } from '../src/lyrics/providers/spotify';
 import type { LyricsResult } from '../src/types/types';
 
 let progress = 12500;
@@ -44,6 +45,13 @@ function fixture(timing: 'line' | 'word' | 'none' = 'line'): LyricsResult {
       endMs: timing === 'word' ? i * 4000 + (j + 1) * 4000 / words.length : null,
     })) };
   }) };
+}
+function spotifyInterludeFixture(): LyricsResult {
+  return adaptSpotifyLyrics({ lyrics: { syncType: 'LINE_SYNCED', lines: [
+    { startTimeMs: '1000', endTimeMs: '9000', words: 'First line' },
+    { startTimeMs: '3000', endTimeMs: '0', words: '♪' },
+    { startTimeMs: '12000', endTimeMs: '14000', words: 'Next line' },
+  ] } })!;
 }
 function backgroundFixture(): LyricsResult {
   return { source: 'amll', instrumental: false, lines: [
@@ -176,7 +184,7 @@ function measure() {
 }
 
 Object.assign(window, { fixture: {
-  view, fixture, backgroundFixture, overlappingTaggedBackingFixture, bracketFixture, sunflowerFixture, standaloneBackingFixture,
+  view, fixture, spotifyInterludeFixture, backgroundFixture, overlappingTaggedBackingFixture, bracketFixture, sunflowerFixture, standaloneBackingFixture,
   forwardBackingFixture, rockabyeShapeFixture, pausedBackingFixture,
   measure, seeks, visibility,
   setProgress: (time: number) => { progress = time; },

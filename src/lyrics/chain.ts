@@ -4,7 +4,7 @@ import { createLyricsPlusProvider } from './providers/lyricsplus';
 import { createBiniLyricsProvider } from './providers/binilyrics';
 import { createAmllProvider } from './providers/amll';
 import { createLrclibProvider } from './providers/lrclib';
-import { createSpotifyLyricsProvider } from './providers/spotify';
+import { createSpotifyLyricsProvider, isSpotifyInterludeText } from './providers/spotify';
 import { defaultCache } from '../storage/cache';
 import { cleanTitle, getPrimaryArtist, createCleanQuery } from './cleaner';
 
@@ -99,6 +99,10 @@ export async function fetchLyrics(
   };
   const readCache = async (candidate: LyricsQuery) => {
     const entry = await cache.get(candidate);
+    if (entry.result?.source === 'spotify' && entry.result.lines.some(line => isSpotifyInterludeText(line.text))) {
+      await cache.delete(candidate);
+      return { hit: false, result: null };
+    }
     if (entry.result && !providers.some(provider => provider.id === entry.result!.source)) {
       return { hit: false, result: null };
     }

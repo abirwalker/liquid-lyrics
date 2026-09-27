@@ -156,6 +156,14 @@ export async function runBoundaryChecks() {
   const spotifyResult = adaptSpotifyLyrics(spotifyFixture, 5000);
   check(spotifyResult?.lines.length === 2 && spotifyResult.lines[0].endMs === 3000,
     'Spotify line timing adapts and infers missing boundary');
+  const spotifyInterlude = adaptSpotifyLyrics({ lyrics: { syncType: 'LINE_SYNCED', lines: [
+    { startTimeMs: '1000', words: 'First line', endTimeMs: '9000' },
+    { startTimeMs: '3000', words: '♪', endTimeMs: '0' },
+    { startTimeMs: '12000', words: 'Next line', endTimeMs: '14000' },
+  ] } });
+  check(spotifyInterlude?.lines.length === 2 && spotifyInterlude.lines[0].endMs === 3000 &&
+    spotifyInterlude.lines[1].startMs === 12000,
+  'Spotify music note marks an instrumental gap without rendering as a lyric');
   check(adaptSpotifyLyrics({ lyrics: { syncType: 'UNSYNCED', lines: [{ words: 'Plain line' }] } })?.lines[0].timing === 'none',
     'Spotify unsynced lyrics adapt without invented timing');
   check(adaptSpotifyLyrics({ lyrics: { syncType: 'SYLLABLE_SYNCED', lines: [{ words: 'Unsupported' }] } }) === null,
@@ -317,6 +325,19 @@ export async function runBoundaryChecks() {
       providerPath.attempts?.map(attempt => `${attempt.provider}:${attempt.outcome}`).join(',') ===
         'binilyrics:unavailable,lyricsplus:static,spotify:line',
     'Provider path reports only observed outcomes in order');
+    const cachedNote = { ...spotifyInterlude!, lines: [
+      { ...spotifyInterlude!.lines[0], endMs: 9000 },
+      { text: '♪', timing: 'line' as const, startMs: 3000, endMs: 12000, agent: null,
+        segments: [{ text: '♪', startMs: null, endMs: null, role: null }] },
+      spotifyInterlude!.lines[1],
+    ] };
+    const cacheWithNote = new LyricsCache();
+    const spotifyQuery = { ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover' };
+    await cacheWithNote.set(spotifyQuery, cachedNote);
+    const refreshed = await fetchLyrics(spotifyQuery, undefined, cacheWithNote);
+    check(refreshed?.source === 'spotify' && !refreshed.cached && spotifyFallbackCalls === 2 &&
+      !refreshed.lines.some(line => line.text === '♪'),
+    'Cached Spotify music-note lines are refreshed through the provider');
     (globalThis as any).Spicetify = originalSpicetify;
     let biniAttempts = 0;
     globalThis.fetch = async input => {
