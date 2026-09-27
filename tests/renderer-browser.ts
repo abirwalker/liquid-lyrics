@@ -55,6 +55,25 @@ function backgroundFixture(): LyricsResult {
       segments: [{ text: 'Next verse', startMs: null, endMs: null, role: null }] },
   ] };
 }
+function overlappingTaggedBackingFixture(): LyricsResult {
+  return { source: 'binilyrics', instrumental: false, lines: [
+    { text: 'Lead one (Oh, no, no)', timing: 'word', startMs: 130130, endMs: 134447, agent: null,
+      segments: [
+        { text: 'Lead one', startMs: 130130, endMs: 133244, role: null },
+        { text: '(Oh, ', startMs: 132965, endMs: 133333, role: 'x-bg' },
+        { text: 'no, ', startMs: 133333, endMs: 133837, role: 'x-bg' },
+        { text: 'no)', startMs: 133837, endMs: 134447, role: 'x-bg' },
+      ] },
+    { text: 'Lead two (Your body)', timing: 'word', startMs: 133816, endMs: 139335, agent: null,
+      segments: [
+        { text: 'Lead two', startMs: 133816, endMs: 138208, role: null },
+        { text: '(Your ', startMs: 137821, endMs: 138219, role: 'x-bg' },
+        { text: 'body)', startMs: 138219, endMs: 139335, role: 'x-bg' },
+      ] },
+    { text: 'Next lead', timing: 'word', startMs: 138458, endMs: 142985, agent: null,
+      segments: [{ text: 'Next lead', startMs: 138458, endMs: 142985, role: null }] },
+  ] };
+}
 function bracketFixture(first: boolean): LyricsResult {
   const text = first ? "(How long?) Slittin' my throat" : "Slittin' my throat (How long?)";
   return { source: 'lyricsplus', instrumental: false, lines: [
@@ -157,7 +176,7 @@ function measure() {
 }
 
 Object.assign(window, { fixture: {
-  view, fixture, backgroundFixture, bracketFixture, sunflowerFixture, standaloneBackingFixture,
+  view, fixture, backgroundFixture, overlappingTaggedBackingFixture, bracketFixture, sunflowerFixture, standaloneBackingFixture,
   forwardBackingFixture, rockabyeShapeFixture, pausedBackingFixture,
   measure, seeks, visibility,
   setProgress: (time: number) => { progress = time; },

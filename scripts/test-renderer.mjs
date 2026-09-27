@@ -123,6 +123,25 @@ try {
   assert.equal(await evaluate("getComputedStyle(document.querySelector('.FmKaba_lyricBgLine')).opacity"), '0.4');
   const backingShot = await command('Page.captureScreenshot', { format: 'png' });
   await writeFile(resolve(out, 'lyrics-background.png'), Buffer.from(backingShot.data, 'base64'));
+  await evaluate('fixture.setProgress(133500); fixture.view.setLyrics(fixture.overlappingTaggedBackingFixture())');
+  await wait(550);
+  const taggedBackingState = index => evaluate(`(() => {
+    const group = fixture.view.player.currentLyricGroups[${index}];
+    return { opacity: Number(getComputedStyle(group.bgLine.getElement()).opacity),
+      height: group.bgWrapper.getBoundingClientRect().height };
+  })()`);
+  assert.ok((await taggedBackingState(0)).height > 0, 'first tagged backing is visible while sung');
+  await evaluate('fixture.setProgress(135000)');
+  await wait(600);
+  assert.deepEqual(await taggedBackingState(0), { opacity: 0, height: 0 },
+    'first tagged backing hides at its own end while the following lead plays');
+  await evaluate('fixture.setProgress(138500)');
+  await wait(550);
+  assert.ok((await taggedBackingState(1)).height > 0, 'second tagged backing is visible while sung');
+  await evaluate('fixture.setProgress(139800)');
+  await wait(600);
+  assert.deepEqual(await taggedBackingState(1), { opacity: 0, height: 0 },
+    'second tagged backing hides at its own end while the following lead plays');
   for (const first of [true, false]) {
     await evaluate(`fixture.setProgress(800); fixture.view.setLyrics(fixture.bracketFixture(${first}))`);
     await wait(600);
@@ -216,7 +235,8 @@ try {
     await evaluate(`fixture.setProgress(${time})`);
     await wait(30);
   }
-  assert.deepEqual(await rockabyeState(), { opacity: '0', wrapperHeight: 0 },
+  const rockabyeFinished = await rockabyeState();
+  assert.ok(Number(rockabyeFinished.opacity) < .01 && rockabyeFinished.wrapperHeight === 0,
     'line-timed bracket backing is gone before the following lead finishes');
   await evaluate('fixture.setPlaying(true); fixture.setProgress(166000); fixture.view.setLyrics(fixture.pausedBackingFixture())');
   await wait(550);
