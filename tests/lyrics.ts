@@ -300,8 +300,23 @@ export async function runBoundaryChecks() {
       spotifyFallbackCalls++;
       return { body: spotifyFixture, status: 200 };
     };
-    check((await fetchLyrics({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover', skipCache: true }, undefined, new LyricsCache()))?.source === 'spotify' &&
-      spotifyFallbackCalls === 1, 'Static primary lyrics fall through to Spotify line timing');
+    const providerMessages: unknown[][] = [];
+    const originalInfo = console.info;
+    console.info = (...args) => { providerMessages.push(args); };
+    let spotifyFallback: Lyrics | null;
+    try {
+      spotifyFallback = await fetchLyrics({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover', skipCache: true }, undefined, new LyricsCache());
+    } finally {
+      console.info = originalInfo;
+    }
+    const providerPath = providerMessages.find(([message]) => message === '[Liquid Lyrics] Provider path:')?.[1] as
+      { selected?: string; attempts?: Array<{ provider: string; outcome: string }> } | undefined;
+    check(spotifyFallback?.source === 'spotify' && spotifyFallbackCalls === 1,
+      'Static primary lyrics fall through to Spotify line timing');
+    check(providerPath?.selected === 'spotify' &&
+      providerPath.attempts?.map(attempt => `${attempt.provider}:${attempt.outcome}`).join(',') ===
+        'binilyrics:unavailable,lyricsplus:static,spotify:line',
+    'Provider path reports only observed outcomes in order');
     (globalThis as any).Spicetify = originalSpicetify;
     let biniAttempts = 0;
     globalThis.fetch = async input => {

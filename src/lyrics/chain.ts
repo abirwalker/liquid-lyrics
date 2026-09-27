@@ -18,27 +18,49 @@ function lyricQuality(result: LyricsResult | null): number {
   return 1;
 }
 
+type ProviderOutcome = 'unavailable' | 'invalid' | 'instrumental' | 'static' | 'line' | 'word' | 'error';
+type ProviderAttempt = { provider: string; outcome: ProviderOutcome; elapsedMs: number };
+
+async function runLyricsChain(
+  query: LyricsQuery,
+  providers: LyricsProvider[],
+  signal?: AbortSignal,
+  stopOnLine = false,
+  record?: (attempt: ProviderAttempt) => void,
+): Promise<LyricsResult | null> {
+  let best: LyricsResult | null = null;
+  for (const provider of providers) {
+    if (signal?.aborted) return null;
+    const started = performance.now();
+    const report = (outcome: ProviderOutcome) => record?.({
+      provider: provider.id, outcome, elapsedMs: Math.round(performance.now() - started),
+    });
+    try {
+      const result = await provider.fetch(query, signal);
+      if (signal?.aborted) return null;
+      if (!isValidResult(result) || result.source !== provider.id) {
+        report(result === null ? 'unavailable' : 'invalid');
+        continue;
+      }
+      const quality = lyricQuality(result);
+      report(quality === 3 ? 'word' : quality === 2 ? 'line' : quality === 1 ? 'static' : 'instrumental');
+      if (quality === 3 || (stopOnLine && quality === 2)) return result;
+      if (quality > lyricQuality(best)) best = result;
+    } catch {
+      report('error');
+      continue;
+    }
+  }
+  return best;
+}
+
 export async function fetchLyricsChain(
   query: LyricsQuery,
   providers: LyricsProvider[],
   signal?: AbortSignal,
   stopOnLine = false,
 ): Promise<LyricsResult | null> {
-  let best: LyricsResult | null = null;
-  for (const provider of providers) {
-    if (signal?.aborted) return null;
-    try {
-      const result = await provider.fetch(query, signal);
-      if (signal?.aborted) return null;
-      if (!isValidResult(result) || result.source !== provider.id) continue;
-      const quality = lyricQuality(result);
-      if (quality === 3 || (stopOnLine && quality === 2)) return result;
-      if (quality > lyricQuality(best)) best = result;
-    } catch {
-      continue;
-    }
-  }
-  return best;
+  return runLyricsChain(query, providers, signal, stopOnLine);
 }
 
 function createProviderTiers(): { primary: LyricsProvider[]; fallback: LyricsProvider[] } {
@@ -61,10 +83,18 @@ export async function fetchLyrics(
   const cleanQ = createCleanQuery(query);
   const { primary, fallback } = createProviderTiers();
   const providers = [...primary, ...fallback];
-  const fetchPreferred = async (candidate: LyricsQuery): Promise<LyricsResult | null> => {
-    const preferred = await fetchLyricsChain(candidate, primary, signal);
+  const attempts: Array<ProviderAttempt & { query: 'original' | 'cleaned' }> = [];
+  const reportPath = (selected: LyricsResult | null) => {
+    if (attempts.length <= 1 || signal?.aborted) return;
+    console.info('[Liquid Lyrics] Provider path:', {
+      song: query.song, selected: selected?.source ?? null, attempts,
+    });
+  };
+  const fetchPreferred = async (candidate: LyricsQuery, variant: 'original' | 'cleaned'): Promise<LyricsResult | null> => {
+    const record = (attempt: ProviderAttempt) => attempts.push({ ...attempt, query: variant });
+    const preferred = await runLyricsChain(candidate, primary, signal, false, record);
     if (signal?.aborted || lyricQuality(preferred) >= 2) return preferred;
-    const fallbackResult = await fetchLyricsChain(candidate, fallback, signal, true);
+    const fallbackResult = await runLyricsChain(candidate, fallback, signal, true, record);
     return lyricQuality(fallbackResult) > lyricQuality(preferred) ? fallbackResult : preferred;
   };
   const readCache = async (candidate: LyricsQuery) => {
@@ -86,17 +116,19 @@ export async function fetchLyrics(
     if (cachedFallback && lyricQuality(cachedFallback) === 2) return { ...cachedFallback, cached: true };
   }
 
-  let result = await fetchPreferred(query);
+  let result = await fetchPreferred(query, 'original');
   if (signal?.aborted) return null;
 
   if (lyricQuality(result) < 3 && cleanQ) {
-    const cleanResult = await fetchPreferred(cleanQ);
+    const cleanResult = await fetchPreferred(cleanQ, 'cleaned');
     if (signal?.aborted) return null;
     if (lyricQuality(cleanResult) > lyricQuality(result)) result = cleanResult;
   }
 
   if (cachedFallback && lyricQuality(cachedFallback) > lyricQuality(result)) {
-    return { ...cachedFallback, cached: true };
+    const selected = { ...cachedFallback, cached: true };
+    reportPath(selected);
+    return selected;
   }
 
   if (cache) {
@@ -106,5 +138,6 @@ export async function fetchLyrics(
     }
   }
 
+  reportPath(result);
   return result;
 }
