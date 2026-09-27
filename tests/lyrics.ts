@@ -112,6 +112,14 @@ export async function runBoundaryChecks() {
     { id: 'synced', fetch: async () => synced },
   ];
   check((await fetchLyricsChain(query, staticProviders))?.source === 'synced', 'Synced provider supersedes earlier static lyrics');
+  const collapsedProvider: LyricsProvider = { id: 'collapsed', fetch: async () => ({
+    source: 'collapsed', instrumental: false, lines: ['First', 'Second'].map(text => ({
+      text, timing: 'line', startMs: 0, endMs: 0, agent: null,
+      segments: [{ text, startMs: null, endMs: null, role: null }],
+    })),
+  }) };
+  check((await fetchLyricsChain(query, [collapsedProvider, { id: 'synced', fetch: async () => synced }]))?.source === 'synced',
+    'Repeated zero timestamps from any provider cannot beat real synced lyrics');
   check((await fetchLyricsChain(query, [staticProviders[0], { id: 'offline', fetch: async () => null }]))?.source === 'custom',
     'Static lyrics remain fallback when no synced result exists');
   check((await fetchLyricsChain(query, [staticProviders[0], { id: 'instrumental', fetch: async () =>
@@ -144,6 +152,23 @@ export async function runBoundaryChecks() {
     'LyricsPlus wrong-song response rejected');
   check(adaptLyricsPlus({ ...lyricsPlusFixture, lyrics: [{ ...lyricsPlusFixture.lyrics[0], syllabus: [] }] }, query)?.lines[0].timing === 'line',
     'LyricsPlus line timing survives missing syllables');
+  const collapsedLyricsPlus = { ...lyricsPlusFixture, lyrics: [
+    { time: 0, duration: 0, text: 'First line', syllabus: [] },
+    { time: 0, duration: 0, text: 'Second line', syllabus: [] },
+  ] };
+  const collapsedResult = adaptLyricsPlus(collapsedLyricsPlus, query);
+  check(collapsedResult?.lines.length === 2 && collapsedResult.lines.every(line =>
+    line.timing === 'none' && line.startMs === null && line.endMs === null),
+  'LyricsPlus repeated zero timestamps are untimed, not synchronized');
+  check(fromTTML('binilyrics', '<tt><p begin="0">First</p><p begin="0">Second</p></tt>')?.lines.every(line =>
+    line.timing === 'none' && line.startMs === null) === true,
+  'Bini TTML with repeated zero timestamps becomes untimed');
+  check(fromTTML('amll', '<tt><p begin="0" end="2">First voice</p><p begin="0" end="2">Second voice</p></tt>')?.lines.every(line =>
+    line.timing === 'line' && line.endMs === 2000) === true,
+  'Two genuinely simultaneous timed lines remain synced');
+  check(fromLRC('lrclib', '[00:00]First\n[00:00]Second')?.lines.every(line =>
+    line.timing === 'none' && line.startMs === null) === true,
+  'LRC with repeated zero timestamps becomes untimed');
   check(fromLRC('custom', '[offset:100]\n[00:00.05]Early')?.lines[0].startMs === 0, 'Offset clamps after subtraction');
   check(adaptLrclib({ syncedLyrics: '[00:01]<00:01.00>Word', plainLyrics: 'Word' })?.lines[0].timing === 'none', 'Unsupported enhanced LRC falls back to plain text');
   check(fromTTML('custom', '<tt><p begin="1" end="2"><![CDATA[Test & text]]></p></tt>')?.lines[0].text === 'Test & text', 'CDATA preserved');
@@ -156,6 +181,11 @@ export async function runBoundaryChecks() {
   const spotifyResult = adaptSpotifyLyrics(spotifyFixture, 5000);
   check(spotifyResult?.lines.length === 2 && spotifyResult.lines[0].endMs === 3000,
     'Spotify line timing adapts and infers missing boundary');
+  check(adaptSpotifyLyrics({ lyrics: { syncType: 'LINE_SYNCED', lines: [
+    { startTimeMs: '0', words: 'First', endTimeMs: '0' },
+    { startTimeMs: '0', words: 'Second', endTimeMs: '0' },
+  ] } })?.lines.every(line => line.timing === 'none' && line.startMs === null) === true,
+  'Spotify with repeated zero timestamps becomes untimed');
   const spotifyInterlude = adaptSpotifyLyrics({ lyrics: { syncType: 'LINE_SYNCED', lines: [
     { startTimeMs: '1000', words: 'First line', endTimeMs: '9000' },
     { startTimeMs: '3000', words: '♪', endTimeMs: '0' },
@@ -300,7 +330,7 @@ export async function runBoundaryChecks() {
       const url = String(input);
       if (url.startsWith('https://lyrics-api.binimum.org/')) return Response.json({ results: [] });
       if (url.startsWith('https://lyricsplus.binimum.org/')) {
-        return Response.json({ ...lyricsPlusFixture, lyrics: [{ text: 'Hello world', syllabus: [] }] });
+        return Response.json(collapsedLyricsPlus);
       }
       throw new Error('Spotify line timing should stop before AMLL and LRCLIB');
     };
@@ -338,6 +368,16 @@ export async function runBoundaryChecks() {
     check(refreshed?.source === 'spotify' && !refreshed.cached && spotifyFallbackCalls === 2 &&
       !refreshed.lines.some(line => line.text === '♪'),
     'Cached Spotify music-note lines are refreshed through the provider');
+    for (const source of ['lyricsplus', 'binilyrics']) {
+      const staleTiming: Lyrics = { ...collapsedResult!, source, lines: collapsedResult!.lines.map(line =>
+        ({ ...line, timing: 'line', startMs: 0, endMs: 0 })) };
+      const cacheWithCollapsed = new LyricsCache();
+      await cacheWithCollapsed.set(spotifyQuery, staleTiming);
+      const recovered = await fetchLyrics(spotifyQuery, undefined, cacheWithCollapsed);
+      check(recovered?.source === 'spotify' && !recovered.cached &&
+        !recovered.lines.some(line => line.startMs === 0 && line.endMs === 0),
+      `Cached ${source} zero-time rows cannot block synced fallback`);
+    }
     (globalThis as any).Spicetify = originalSpicetify;
     let biniAttempts = 0;
     globalThis.fetch = async input => {
@@ -429,6 +469,7 @@ export async function runBoundaryChecks() {
     let requested = false;
     globalThis.fetch = async () => { requested = true; return new Response('unexpected'); };
     for (const provider of createDefaultChain()) check(await provider.fetch(query, stopped.signal) === null, 'Pre-aborted provider returns null');
+    check(!requested, 'Pre-aborted providers make no network requests');
     // Cache boundary checks
     check(normalizeString('  Glass  Animals ') === 'glass animals', 'Cache key normalization');
     const cacheKeys = getCacheKeys({ song: 'Heat Waves', artist: 'Glass Animals', spotifyId: '123' });

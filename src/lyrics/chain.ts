@@ -1,5 +1,5 @@
 ﻿import type { LyricsProvider, LyricsQuery, LyricsResult } from '../types/types';
-import { isValidResult } from '../types/types';
+import { hasCollapsedTiming, isValidResult, normalizeCollapsedTiming } from '../types/types';
 import { createLyricsPlusProvider } from './providers/lyricsplus';
 import { createBiniLyricsProvider } from './providers/binilyrics';
 import { createAmllProvider } from './providers/amll';
@@ -42,10 +42,11 @@ async function runLyricsChain(
         report(result === null ? 'unavailable' : 'invalid');
         continue;
       }
-      const quality = lyricQuality(result);
+      const normalized = normalizeCollapsedTiming(result);
+      const quality = lyricQuality(normalized);
       report(quality === 3 ? 'word' : quality === 2 ? 'line' : quality === 1 ? 'static' : 'instrumental');
-      if (quality === 3 || (stopOnLine && quality === 2)) return result;
-      if (quality > lyricQuality(best)) best = result;
+      if (quality === 3 || (stopOnLine && quality === 2)) return normalized;
+      if (quality > lyricQuality(best)) best = normalized;
     } catch {
       report('error');
       continue;
@@ -99,7 +100,8 @@ export async function fetchLyrics(
   };
   const readCache = async (candidate: LyricsQuery) => {
     const entry = await cache.get(candidate);
-    if (entry.result?.source === 'spotify' && entry.result.lines.some(line => isSpotifyInterludeText(line.text))) {
+    if (entry.result && (hasCollapsedTiming(entry.result) ||
+        (entry.result.source === 'spotify' && entry.result.lines.some(line => isSpotifyInterludeText(line.text))))) {
       await cache.delete(candidate);
       return { hit: false, result: null };
     }

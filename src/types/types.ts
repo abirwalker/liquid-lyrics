@@ -40,6 +40,21 @@ export function hasSyncedLyrics(result: LyricsResult): boolean {
   return !result.instrumental && result.lines.some(line => line.timing !== 'none');
 }
 
+export function hasCollapsedTiming(result: LyricsResult): boolean {
+  const timed = result.lines.filter(line => line.timing !== 'none');
+  return timed.length > 1 && timed.every(line => line.startMs === 0 &&
+    line.segments.every(segment => segment.startMs === null || segment.startMs === 0)) &&
+    (timed.length > 2 || timed.every(line => line.endMs === null || line.endMs === 0));
+}
+
+export function normalizeCollapsedTiming(result: LyricsResult): LyricsResult {
+  if (!hasCollapsedTiming(result)) return result;
+  return { ...result, lines: result.lines.map(line => ({
+    ...line, timing: 'none', startMs: null, endMs: null,
+    segments: [{ text: line.text, startMs: null, endMs: null, role: null }],
+  })) };
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

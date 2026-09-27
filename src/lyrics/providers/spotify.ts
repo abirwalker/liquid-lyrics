@@ -1,5 +1,5 @@
 ﻿import type { LyricsProvider, LyricsQuery, LyricsResult, LyricsLine } from '../../types/types';
-import { isRecord, isValidResult } from '../../types/types';
+import { isRecord, isValidResult, normalizeCollapsedTiming } from '../../types/types';
 
 export function isSpotifyInterludeText(text: string): boolean {
   return /^[\u266A\u266B\u266C\u2669]+$/u.test(text.trim());
@@ -92,7 +92,7 @@ export function adaptSpotifyLyrics(body: unknown, durationMs?: number): LyricsRe
     lines,
   };
 
-  return isValidResult(result) ? result : null;
+  return isValidResult(result) ? normalizeCollapsedTiming(result) : null;
 }
 
 export function createSpotifyLyricsProvider(): LyricsProvider {

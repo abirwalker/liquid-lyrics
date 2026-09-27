@@ -1,5 +1,5 @@
 import type { LyricsLine as Line, LyricsSegment as Segment, LyricsResult } from '../types/types';
-import { isValidResult } from '../types/types';
+import { isValidResult, normalizeCollapsedTiming } from '../types/types';
 
 function time(value: string | null): number | null {
   if (value === null) return null;
@@ -158,7 +158,7 @@ export function fromTTML(source: string, input: unknown): LyricsResult | null {
     }
     lines.sort((a, b) => (a.startMs ?? Number.MAX_SAFE_INTEGER) - (b.startMs ?? Number.MAX_SAFE_INTEGER));
     const result = { source, instrumental: false, lines };
-    return isValidResult(result) ? result : null;
+    return isValidResult(result) ? normalizeCollapsedTiming(result) : null;
   } catch { return null; }
 }
 
@@ -197,5 +197,5 @@ export function fromLRC(source: string, input: unknown, durationMs?: number): Ly
     line.endMs = next ?? (typeof durationMs === 'number' && Number.isSafeInteger(durationMs) && durationMs > line.startMs! ? durationMs : null);
   }
   const result = { source, instrumental: false, lines };
-  return isValidResult(result) ? result : null;
+  return isValidResult(result) ? normalizeCollapsedTiming(result) : null;
 }
