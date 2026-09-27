@@ -13,6 +13,7 @@ export class LyricsView {
   private background: MeshGradientRenderer | null = null;
   private artworkUrl = '';
   private artworkVersion = 0;
+  private artworkRequestVersion = -1;
   private artworkTask: Promise<void> = Promise.resolve();
   private reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   private host: HTMLElement | null = null;
@@ -181,14 +182,15 @@ export class LyricsView {
     if (url === this.artworkUrl) return;
     this.artworkUrl = url;
     this.artworkVersion++;
-    if (this.background) this.background.getElement().dataset.ready = 'false';
+    if (!url && this.background) this.background.getElement().dataset.ready = 'false';
     if (this.isOpen) this.loadArtwork();
   }
 
   private loadArtwork() {
     if (!this.artworkUrl || !this.background) return;
-    if (this.background.getElement().dataset.ready === 'true') return;
+    if (this.artworkRequestVersion === this.artworkVersion) return;
     const version = this.artworkVersion;
+    this.artworkRequestVersion = version;
     const background = this.background;
     const image = new Image();
     image.crossOrigin = 'anonymous';
@@ -203,9 +205,17 @@ export class LyricsView {
         background.resume();
         background.setStaticMode(this.reducedMotion.matches || !globalThis.Spicetify?.Player.isPlaying());
         if (!this.isOpen) background.pause();
-      }).catch((error: unknown) => console.warn('[Liquid Lyrics] Artwork rendering failed:', error));
+      }).catch((error: unknown) => {
+        if (version !== this.artworkVersion) return;
+        this.artworkRequestVersion = -1;
+        background.getElement().dataset.ready = 'false';
+        console.warn('[Liquid Lyrics] Artwork rendering failed:', error);
+      });
     }).catch((error: unknown) => {
-      if (version === this.artworkVersion) console.warn('[Liquid Lyrics] Artwork unavailable:', error);
+      if (version !== this.artworkVersion) return;
+      this.artworkRequestVersion = -1;
+      background.getElement().dataset.ready = 'false';
+      console.warn('[Liquid Lyrics] Artwork unavailable:', error);
     });
   }
 

@@ -91,6 +91,25 @@ try {
       await writeFile(resolve(out, `lyrics-${width}.png`), Buffer.from(shot.data, 'base64'));
     }
   }
+  assert.equal(await evaluate("document.querySelector('.ll-background').dataset.ready"), 'true', 'first artwork is visible');
+  const transitionState = await evaluate(`(() => {
+    const cover = document.createElement('canvas');
+    cover.width = cover.height = 128;
+    const context = cover.getContext('2d');
+    context.fillStyle = '#195a87';
+    context.fillRect(0, 0, 128, 128);
+    context.fillStyle = '#e89655';
+    context.fillRect(0, 0, 64, 64);
+    fixture.view.updateTrack({ metadata: { image_url: cover.toDataURL() } });
+    return { ready: document.querySelector('.ll-background').dataset.ready,
+      artworkUrl: fixture.view.artworkUrl, coverUrl: cover.toDataURL() };
+  })()`);
+  assert.equal(transitionState.artworkUrl, transitionState.coverUrl, 'new cover was selected');
+  assert.equal(transitionState.ready, 'true',
+    'previous artwork stays visible while the next cover loads');
+  await wait(700);
+  assert.equal(await evaluate("document.querySelector('.ll-background').dataset.ready"), 'true',
+    'background remains visible through the album transition');
   await evaluate('fixture.setProgress(5500); fixture.view.setLyrics(fixture.backgroundFixture())');
   await wait(400);
   assert.equal(await evaluate("document.querySelectorAll('.FmKaba_lyricBgLine').length"), 1, 'one backing line');
