@@ -3,7 +3,54 @@ import '@applemusic-like-lyrics/core/style.css';
 import './styles.css';
 import type { LyricsResult } from '../types/types';
 import { convertToAmllLines, type DisplayLyricLine } from './adapter';
-import { isRecord } from '../types/types';
+import { getSongwriters, isRecord } from '../types/types';
+
+const PROVIDER_CREDITS = new Map([
+  ['binilyrics', 'BiniLyrics · Binimum'],
+  ['lyricsplus', 'LyricsPlus · Binimum'],
+  ['spotify', 'Spotify'],
+  ['amll', 'AMLL'],
+  ['lrclib', 'LRCLIB'],
+]);
+
+const LYRIC_ALIGN_POSITION = 0.35;
+const CREDITS_END_POSITION = 0.7;
+
+class CreditsLyricPlayer extends DomLyricPlayer {
+  constructor() {
+    super();
+    this.resizeObserver.observe(this.getBottomLineElement());
+  }
+
+  public override calcLayout(sync = false, force = false): Promise<void> {
+    this.layoutState.alignPosition = LYRIC_ALIGN_POSITION;
+    const height = this.size[1];
+    const footerHeight = this.bottomLine.lineSize[1];
+    if (!height || !footerHeight || !this.getBottomLineElement().childElementCount) return super.calcLayout(sync, force);
+
+    const groups = this.currentLyricGroups;
+    const index = Math.min(this.timelineState.scrollToIndex, groups.length);
+    const groupHeight = (group: typeof groups[number]) => this.lyricGroupSize.get(group)?.[1] ?? height / 5;
+    const targetHeight = groups[index] ? groupHeight(groups[index]) : footerHeight;
+    const remainingHeight = groups.slice(index).reduce((total, group) => total + groupHeight(group), 0);
+    let unscrolledBottom = height * LYRIC_ALIGN_POSITION - targetHeight / 2 + remainingHeight + footerHeight;
+    // Interior interlude dots cancel out in AMLL's footer position; intro dots add height.
+    const introEnd = (groups[0]?.startTime ?? 0) - 250;
+    const time = this.timelineState.currentTime + 20;
+    if (index === 0 && introEnd >= 4000 && time > 0 && time < introEnd) {
+      unscrolledBottom += this.layoutState.interludeDotsSize[1] + (this.baseFontSize || 24) * 0.8;
+    }
+    const endPosition = height * CREDITS_END_POSITION;
+    const shift = Math.max(0, endPosition - unscrolledBottom);
+    const maxOffset = Math.max(0, unscrolledBottom - endPosition);
+    this.layoutState.alignPosition += shift / height;
+    this.scrollState.scrollOffset = Math.min(this.scrollState.scrollOffset, maxOffset);
+    // Give springs only the final layout, including each row's animation delay.
+    const layout = super.calcLayout(sync, force);
+    this.scrollState.scrollBoundary.maxOffset = maxOffset;
+    return layout;
+  }
+}
 
 export class LyricsView {
   private overlay: HTMLElement;
@@ -26,6 +73,8 @@ export class LyricsView {
   private lastPlaying: boolean | null = null;
   private lastProgress: number | null = null;
   private lines: LyricLine[] = [];
+  private finalLyricStart: number | null = null;
+  private creditResult: LyricsResult | null = null;
   private backingCues: Array<{ element: HTMLElement; wrapper: HTMLElement; startMs: number; endMs: number; inferred: boolean }> = [];
   private isOpen = false;
   private animFrameId: number | null = null;
@@ -40,11 +89,11 @@ export class LyricsView {
     this.overlay = document.createElement('div');
     this.overlay.id = 'liquid-lyrics-overlay';
 
-    this.player = new DomLyricPlayer();
+    this.player = new CreditsLyricPlayer();
     this.applyMotionPreference();
     this.player.setWordFadeWidth(0.5);
     this.player.setLinePosYSpringParams({ mass: 1.3 });
-    this.player.setAlignPosition(0.35);
+    this.player.setAlignPosition(LYRIC_ALIGN_POSITION);
     this.player.setOptimizeOptions({ tryAdvanceStartTime: false });
 
     const playerElement = this.player.getElement();
@@ -94,6 +143,7 @@ export class LyricsView {
     globalThis.Spicetify?.Player.seek(time);
     this.player.resetScroll();
     this.player.setCurrentTime(time, true);
+    this.updateCreditFocus(time);
     this.updateTimedBacking(time);
     this.lastProgress = time;
   }
@@ -117,10 +167,15 @@ export class LyricsView {
       return;
     }
 
+    this.creditResult = result;
+    this.finalLyricStart = null;
+    this.updateCreditFocus(0);
+
     if (result.lines.length && result.lines.every((line) => line.timing === 'none')) {
       this.lines = [];
       this.backingCues = [];
       this.player.setLyricLines([]);
+      this.player.getBottomLineElement().replaceChildren();
       this.player.getElement().hidden = true;
       this.statusEl.hidden = true;
       this.plainLyrics.replaceChildren(...result.lines.map((line) => {
@@ -128,6 +183,7 @@ export class LyricsView {
         paragraph.textContent = line.text;
         return paragraph;
       }));
+      this.plainLyrics.appendChild(this.makeCredits(result));
       this.plainLyrics.hidden = false;
       this.plainLyrics.scrollTop = 0;
       return;
@@ -140,11 +196,14 @@ export class LyricsView {
     }
 
     this.lines = lines;
+    this.finalLyricStart = lines.filter(line => !line.isBG && line.words.some(word => word.word.trim()))
+      .at(-1)?.startTime ?? null;
     this.plainLyrics.hidden = true;
     this.plainLyrics.replaceChildren();
     this.player.getElement().hidden = false;
     const progress = this.getProgress();
     this.statusEl.hidden = true;
+    this.player.getBottomLineElement().replaceChildren(this.makeCredits(result));
     this.player.resetScroll();
     this.player.setLyricLines(lines, progress);
     this.backingCues = this.player.currentLyricGroups.flatMap((group) => {
@@ -155,6 +214,7 @@ export class LyricsView {
         inferred: backing.inferredBacking === true }];
     });
     this.player.setCurrentTime(progress, true);
+    this.updateCreditFocus(progress);
     this.updateTimedBacking(progress);
     this.player.update(0);
     this.lastPlaying = null;
@@ -164,13 +224,45 @@ export class LyricsView {
     this.showStatus('Looking for lyrics…');
   }
 
+  public setSongwriters(names: string[]) {
+    const songwriters = getSongwriters(names);
+    if (!this.creditResult || !songwriters.length || this.creditResult.songwriters?.length) return;
+    this.creditResult = { ...this.creditResult, songwriters };
+    const footer = this.overlay.querySelector('.ll-credits');
+    footer?.replaceWith(this.makeCredits(this.creditResult));
+  }
+
+  private makeCredits(result: LyricsResult): HTMLElement {
+    const footer = document.createElement('footer');
+    footer.className = 'll-credits';
+    footer.setAttribute('aria-label', 'Song and lyric credits');
+    if (result.songwriters?.length) {
+      const label = document.createElement('p');
+      label.className = 'll-credits-label';
+      label.textContent = 'Written by';
+      const writers = document.createElement('p');
+      writers.className = 'll-credits-writers';
+      writers.textContent = result.songwriters.join(', ');
+      footer.append(label, writers);
+    }
+    const provider = document.createElement('p');
+    provider.className = 'll-credits-source';
+    provider.textContent = `Provided by ${PROVIDER_CREDITS.get(result.source) ?? result.source}`;
+    footer.appendChild(provider);
+    return footer;
+  }
+
   private showStatus(message: string) {
+    this.creditResult = null;
+    this.finalLyricStart = null;
+    this.updateCreditFocus(0);
     this.lines = [];
     this.backingCues = [];
     this.plainLyrics.hidden = true;
     this.plainLyrics.replaceChildren();
     this.player.getElement().hidden = true;
     this.player.setLyricLines([]);
+    this.player.getBottomLineElement().replaceChildren();
     this.player.update(0);
     this.statusEl.textContent = message;
     this.statusEl.hidden = false;
@@ -342,6 +434,11 @@ export class LyricsView {
     if (this.animFrameId === null) this.animFrameId = requestAnimationFrame(this.onFrame);
   }
 
+  private updateCreditFocus(progress: number) {
+    this.player.getBottomLineElement().classList.toggle('ll-credits-readable',
+      this.finalLyricStart !== null && progress >= this.finalLyricStart);
+  }
+
   private updateTimedBacking(progress: number) {
     for (const cue of this.backingCues) {
       const finished = progress >= cue.endMs;
@@ -382,6 +479,7 @@ export class LyricsView {
       const progress = this.getProgress();
       const seeking = this.lastProgress === null || Math.abs(progress - this.lastProgress) > 1000;
       this.player.setCurrentTime(progress, seeking);
+      this.updateCreditFocus(progress);
       this.lastProgress = progress;
       this.player.update(deltaMs);
       this.updateTimedBacking(progress);

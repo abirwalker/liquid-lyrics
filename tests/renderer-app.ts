@@ -28,6 +28,18 @@ class Button {
   deregister() { this.element.remove(); }
 }
 const parameters = new URLSearchParams(location.search);
+const playerEvents = new Map<string, Array<(event?: unknown) => void>>();
+const creditRequests = new Map<string, (response: unknown) => void>();
+if (parameters.has('credits')) {
+  globalThis.fetch = async input => {
+    const url = new URL(String(input));
+    if (url.searchParams.get('title') === 'With writers') return Response.json({
+      metadata: { title: 'With writers', artist: 'Fixture Artist', totalDuration: '0:06',
+        songWriters: ['Provider Writer'] }, lyrics: [{ text: 'Fixture lyric', time: 1000, duration: 1000 }],
+    });
+    return Response.json({ syncedLyrics: '[00:01]Fixture lyric' });
+  };
+}
 class TopbarButton {
   element = document.createElement('div');
   button: HTMLButtonElement;
@@ -40,12 +52,31 @@ class TopbarButton {
 }
 setTimeout(() => {
   globalThis.Spicetify = {
-    Player: { data: {}, getProgress: () => 0, getDuration: () => 0, isPlaying: () => false,
-      seek: () => {}, addEventListener: () => {}, removeEventListener: () => {} },
+    Player: { data: {}, getProgress: () => parameters.has('credits') ? 1500 : 0, getDuration: () => 0, isPlaying: () => false,
+      seek: () => {}, addEventListener: (event, callback) => {
+        playerEvents.set(event, [...playerEvents.get(event) ?? [], callback]);
+      }, removeEventListener: () => {} },
+    GraphQL: parameters.has('credits') ? {
+      Definitions: { queryTrackCreditsGroupedModal: { name: 'Synthetic definition' } },
+      Request: (_definition, variables) => new Promise(resolve => {
+        creditRequests.set(String(variables.trackUri), resolve);
+      }),
+    } : undefined,
     showNotification: () => {},
     Platform: parameters.has('fallback') ? undefined : { History: history },
     Playbar: parameters.has('topbar') ? undefined : { Button },
     Topbar: { Button: TopbarButton },
   };
 }, 150);
-Object.assign(window, { appFixture: { history, registrations, registerCalls: () => registerCalls } });
+Object.assign(window, { appFixture: { history, registrations, registerCalls: () => registerCalls,
+  creditRequests,
+  changeTrack: (id: string, name = 'Fixture') => {
+    globalThis.Spicetify!.Player.data!.item = { uri: `spotify:track:${id}`, name,
+      artists: [{ name: 'Fixture Artist' }], duration: { milliseconds: 6000 } };
+    playerEvents.get('songchange')?.forEach(callback => callback());
+  },
+  finishCredits: (id: string, writer: string) => {
+    creditRequests.get(`spotify:track:${id}`)?.({ data: { trackUnion: { __typename: 'Track',
+      creditsTrait: { contributors: { items: [{ name: writer, role: 'Composer' }] } } } } });
+  },
+} });

@@ -282,9 +282,17 @@ try {
   await evaluate("document.querySelector('.ll-player').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown',bubbles:true}))");
   assert.equal(await evaluate('fixture.seeks.at(-1)'), 4000, 'keyboard seeks');
   await evaluate("fixture.view.setLyrics(fixture.fixture('none'))");
-  assert.equal(await evaluate("document.querySelectorAll('.ll-plain-lyrics p').length"), 8);
+  assert.equal(await evaluate("document.querySelectorAll('.ll-plain-lyrics > p').length"), 8);
+  await evaluate(`document.querySelector('.ll-plain-lyrics > p').dataset.creditFixture = 'plain';
+    fixture.view.setSongwriters(['<img src=x onerror=alert(1)>'])`);
+  assert.equal(await evaluate("document.querySelector('.ll-plain-lyrics .ll-credits-writers').textContent"),
+    '<img src=x onerror=alert(1)>', 'writer names render safely as text');
+  assert.equal(await evaluate("document.querySelector('.ll-credits img')"), null);
+  assert.equal(await evaluate("document.querySelector('.ll-plain-lyrics > p').dataset.creditFixture"), 'plain',
+    'writer update preserves plain lyric elements');
   assert.equal(await evaluate("document.querySelector('.ll-player').hidden"), true);
   await evaluate('fixture.view.setLyrics(null)');
+  assert.equal(await evaluate("document.querySelector('.ll-credits')"), null, 'no stale credits after clearing lyrics');
   assert.equal(await evaluate("document.querySelector('.ll-status-msg').textContent"), 'No lyrics available');
   await evaluate("fixture.view.setLyrics({source:'test',instrumental:true,lines:[]})");
   assert.equal(await evaluate("document.querySelector('.ll-status-msg').textContent"), 'Instrumental track');
@@ -313,6 +321,8 @@ try {
   await wait(700);
   const filters = await evaluate("[...document.querySelectorAll('.FmKaba_lyricLineWrapper')].map(el => getComputedStyle(el).filter)");
   assert.ok(filters.every(filter => filter === 'none'), `reduced motion has no blur: ${filters}`);
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).transitionDuration"),
+    '0s', 'reduced motion disables the credits transition');
   await command('Emulation.setEmulatedMedia', { features: [] });
   await evaluate("fixture.view.setLyrics(fixture.fixture('word')); fixture.setProgress(12500); fixture.setPlaying(true)");
   await wait(700);
@@ -326,6 +336,155 @@ try {
   const resumedWidth = await lineWidth();
   assert.ok(Math.abs(playingWidth - pausedWidth) < 1 && Math.abs(playingWidth - resumedWidth) < 1,
     `pause/resume changed lyric width: ${playingWidth}, ${pausedWidth}, ${resumedWidth}`);
+  await evaluate(`(() => {
+    const result = fixture.fixture();
+    result.lines.at(-1).endMs = 120000;
+    result.songwriters = ['Synthetic Writer'];
+    fixture.view.setLyrics(result);
+    fixture.setProgress(60000);
+    fixture.setPlaying(false);
+  })()`);
+  await wait(600);
+  const longFinal = await evaluate(`(() => {
+    const bottom = document.querySelector('[data-bottom-line="true"]');
+    const wrappers = [...document.querySelectorAll('.FmKaba_lyricLineWrapper')];
+    return { focused: bottom.dataset.focused === 'true', filter: getComputedStyle(bottom).filter,
+      lastActive: !!wrappers.at(-1)?.querySelector('.FmKaba_active'),
+      previousBlurred: wrappers.slice(0, -1).some(wrapper => getComputedStyle(wrapper).filter !== 'none') };
+  })()`);
+  assert.equal(longFinal.focused, false, 'supplied final lyric end is preserved');
+  assert.equal(longFinal.lastActive, true, 'long final lyric remains active');
+  assert.equal(longFinal.filter, 'blur(0px)', 'credits remain readable below an active final lyric');
+  assert.equal(longFinal.previousBlurred, true, 'credit fix preserves lyric blur');
+  await evaluate('fixture.setProgress(121000)');
+  await wait(400);
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).filter"), 'blur(0px)',
+    'credits stay clear when playback crosses the final lyric end');
+  const creditBlur = async () => {
+    const filter = await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).filter");
+    return filter === 'none' ? 0 : parseFloat(filter.slice(5));
+  };
+  await evaluate('fixture.setProgress(24000)');
+  await wait(600);
+  const beforeFinalBlur = await creditBlur();
+  assert.ok(beforeFinalBlur > 0, 'credits remain blurred before the final lyric');
+  await evaluate('fixture.setProgress(28000)');
+  await wait(120);
+  const midwayClear = await creditBlur();
+  assert.ok(midwayClear > 0 && midwayClear < beforeFinalBlur, 'credits blur eases into clarity');
+  await wait(450);
+  assert.equal(await creditBlur(), 0, 'credits settle clear during the final lyric');
+  await evaluate('fixture.setProgress(24000)');
+  await wait(120);
+  const midwayBlur = await creditBlur();
+  assert.ok(midwayBlur > 0 && midwayBlur < beforeFinalBlur, 'credits blur eases back when seeking earlier');
+  await wait(450);
+  assert.ok(await creditBlur() > 0, 'credit blur returns before the final lyric');
+  await evaluate(`(() => {
+    const data = fixture.fixture(); data.lines.at(-1).endMs = 120000;
+    data.songwriters = ['Synthetic Writer'];
+    fixture.setPlaying(true); fixture.setProgress(60000); fixture.view.setLyrics(data);
+  })()`);
+  await wait(1500);
+  const stopMovement = await evaluate(`(async () => {
+    const player = fixture.view.player;
+    const groups = [player.currentLyricGroups[0], player.currentLyricGroups.at(-2)];
+    const initial = groups.map(group => group.posY.getCurrentPosition());
+    let maxMovement = 0;
+    for (let frame = 0; frame < 45; frame++) {
+      player.getElement().dispatchEvent(new WheelEvent('wheel', {deltaY:10000, bubbles:true, cancelable:true}));
+      player.update(16);
+      await new Promise(requestAnimationFrame);
+      groups.forEach((group, index) => {
+        maxMovement = Math.max(maxMovement, Math.abs(group.posY.getCurrentPosition() - initial[index]));
+      });
+    }
+    return maxMovement;
+  })()`);
+  assert.ok(stopMovement < 1, `wheel input at the stop does not make earlier lyrics wobble: ${stopMovement}px`);
+  await evaluate('fixture.setPlaying(false)');
+  const endLayout = () => evaluate(`(() => {
+    const player = document.querySelector('.ll-player').getBoundingClientRect();
+    const footer = document.querySelector('.ll-player .ll-credits').getBoundingClientRect();
+    const last = fixture.view.player.currentLyricGroups.at(-1).element.getBoundingClientRect();
+    return { bottom: footer.bottom - player.top, height: player.height, lastTop: last.top - player.top };
+  })()`);
+  for (const [width, height] of [[1100, 900], [700, 500], [400, 800]]) {
+    await command('Emulation.setDeviceMetricsOverride', { width: width + 48, height: height + 64, deviceScaleFactor: 1, mobile: false });
+    await evaluate(`(() => { fixture.resize(${height}); fixture.setPlaying(false); fixture.setProgress(28500);
+      const data = fixture.fixture(); data.songwriters = ['Synthetic Writer One', 'Synthetic Writer Two'];
+      fixture.view.setLyrics(data); })()`);
+    await wait(1500);
+    const lastLine = await endLayout();
+    await evaluate('fixture.setProgress(33000)');
+    await wait(900);
+    const finished = await endLayout();
+    assert.ok(Math.abs(finished.bottom - finished.height * .7) < 2, `end credits stop at 70%: ${JSON.stringify(finished)}`);
+    if (lastLine.bottom <= lastLine.height * .7 + 5) {
+      assert.ok(Math.abs(lastLine.bottom - finished.bottom) < 5, 'last line ending does not recenter the footer');
+    }
+    await evaluate(`document.querySelector('.ll-player').dispatchEvent(new WheelEvent('wheel', {deltaY:10000, bubbles:true, cancelable:true}))`);
+    await wait(900);
+    const scrolledEnd = await endLayout();
+    assert.ok(Math.abs(scrolledEnd.bottom - finished.bottom) < 2, 'wheel cannot scroll credits beyond the end');
+    await evaluate(`document.querySelector('.ll-player').dispatchEvent(new WheelEvent('wheel', {deltaY:-200, bubbles:true, cancelable:true}))`);
+    await wait(900);
+    const scrolledBack = await endLayout();
+    assert.ok(scrolledBack.lastTop > scrolledEnd.lastTop + 100, 'wheel still scrolls back to earlier lyrics');
+    await evaluate(`document.querySelector('.ll-player').dispatchEvent(new WheelEvent('wheel', {deltaY:10000, bubbles:true, cancelable:true}))`);
+    await wait(900);
+    assert.ok(Math.abs((await endLayout()).bottom - finished.bottom) < 2, 'scrolling returns to the same end limit');
+    await evaluate(`fixture.view.setLyrics(fixture.fixture()); fixture.setProgress(33000)`);
+    await wait(900);
+    await evaluate(`fixture.view.setSongwriters(['Synthetic Writer One', 'Synthetic Writer Two', 'Synthetic Writer Three'])`);
+    await wait(900);
+    const lateWriters = await endLayout();
+    assert.ok(Math.abs(lateWriters.bottom - lateWriters.height * .7) < 2, 'late writer names remeasure the scroll end');
+    await evaluate('fixture.setProgress(12500)');
+    await wait(900);
+    await evaluate(`document.querySelector('.ll-player').dispatchEvent(new WheelEvent('wheel', {deltaY:10000, bubbles:true, cancelable:true}))`);
+    await wait(900);
+    const earlyScroll = await endLayout();
+    assert.ok(Math.abs(earlyScroll.bottom - earlyScroll.height * .7) < 2, 'manual scroll stops at credits during earlier playback too');
+  }
+  await evaluate(`document.querySelector('.ll-player').dispatchEvent(new WheelEvent('wheel', {deltaY:-200, bubbles:true, cancelable:true}))`);
+  await wait(900);
+  await evaluate(`(() => {
+    const element = document.querySelector('.ll-player');
+    const touch = new Touch({identifier:1, target:element, screenX:200, screenY:600, clientX:200, clientY:600});
+    element.dispatchEvent(new TouchEvent('touchstart', {touches:[touch], changedTouches:[touch], bubbles:true, cancelable:true}));
+  })()`);
+  await wait(100);
+  await evaluate(`(() => {
+    const element = document.querySelector('.ll-player');
+    const touch = new Touch({identifier:1, target:element, screenX:200, screenY:0, clientX:200, clientY:0});
+    element.dispatchEvent(new TouchEvent('touchmove', {touches:[touch], changedTouches:[touch], bubbles:true, cancelable:true}));
+    element.dispatchEvent(new TouchEvent('touchend', {touches:[], changedTouches:[touch], bubbles:true, cancelable:true}));
+  })()`);
+  await wait(1500);
+  const touchEnd = await endLayout();
+  assert.ok(Math.abs(touchEnd.bottom - touchEnd.height * .7) < 2, 'touch drag and inertia respect the credit scroll limit');
+  await evaluate(`(() => {
+    const data = fixture.fixture();
+    data.lines.forEach(line => {line.startMs += 8000; line.endMs += 8000;});
+    fixture.setPlaying(false); fixture.setProgress(1000); fixture.view.setLyrics(data);
+  })()`);
+  await wait(1500);
+  await evaluate(`document.querySelector('.ll-player').dispatchEvent(new WheelEvent('wheel', {deltaY:10000, bubbles:true, cancelable:true}))`);
+  await wait(1500);
+  const introScroll = await endLayout();
+  assert.ok(Math.abs(introScroll.bottom - introScroll.height * .7) < 2, 'intro dots are included in the manual end limit');
+  await evaluate(`(() => {
+    const data = fixture.fixture(); data.lines[0].endMs = 1000; data.lines[1].startMs = 7000;
+    fixture.setProgress(2000); fixture.view.setLyrics(data);
+  })()`);
+  await wait(1500);
+  await evaluate(`document.querySelector('.ll-player').dispatchEvent(new WheelEvent('wheel', {deltaY:10000, bubbles:true, cancelable:true}))`);
+  await wait(1500);
+  const interludeScroll = await endLayout();
+  assert.ok(Math.abs(interludeScroll.bottom - interludeScroll.height * .7) < 2, 'interior dots preserve the manual end limit');
+  await command('Emulation.setDeviceMetricsOverride', { width: 1148, height: 964, deviceScaleFactor: 1, mobile: false });
+  await evaluate('fixture.resize(800)');
   for (const mode of ['', '?fallback=1', '?topbar=1']) {
     await command('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/app${mode}` });
     await wait(600);
@@ -346,6 +505,34 @@ try {
     assert.equal(await evaluate("appFixture.registrations[0].element.getAttribute('aria-pressed')"), 'false', 'Escape updates button');
     assert.equal(await evaluate("document.querySelector('#original').style.display"), 'flex', 'host restored');
   }
+  await command('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/app?credits` });
+  async function until(expression) {
+    for (let count = 0; count < 100; count++) {
+      if (await evaluate(expression)) return;
+      await wait(50);
+    }
+    throw new Error(`Timed out: ${expression}`);
+  }
+  await until('window.appFixture?.registerCalls() > 0');
+  const firstId = '1'.repeat(22), secondId = '2'.repeat(22), thirdId = '3'.repeat(22);
+  await evaluate(`appFixture.changeTrack('${firstId}')`);
+  await until(`appFixture.creditRequests.has('spotify:track:${firstId}')`);
+  assert.equal(await evaluate(`document.querySelector('.ll-credits-source')?.textContent`), 'Provided by LRCLIB');
+  await evaluate(`appFixture.changeTrack('${secondId}')`);
+  await until(`appFixture.creditRequests.has('spotify:track:${secondId}')`);
+  await evaluate(`appFixture.finishCredits('${firstId}', 'Stale Writer')`);
+  await wait(50);
+  assert.equal(await evaluate(`!!document.querySelector('.ll-credits-writers')`), false, 'stale track writers ignored');
+  await until(`!!document.querySelector('.FmKaba_lyricLine:has(.FmKaba_lyricMainLine)')`);
+  await evaluate(`document.querySelector('.FmKaba_lyricLine:has(.FmKaba_lyricMainLine)').dataset.creditFixture = 'current'`);
+  await evaluate(`appFixture.finishCredits('${secondId}', 'Current Writer')`);
+  await until(`document.querySelector('.ll-credits-writers')?.textContent === 'Current Writer'`);
+  assert.equal(await evaluate(`document.querySelector('.ll-credits-source')?.textContent`), 'Provided by LRCLIB');
+  assert.equal(await evaluate(`document.querySelector('.FmKaba_lyricLine:has(.FmKaba_lyricMainLine)').dataset.creditFixture`),
+    'current', 'late credits do not recreate lyric lines');
+  await evaluate(`appFixture.changeTrack('${thirdId}', 'With writers')`);
+  await until(`document.querySelector('.ll-credits-writers')?.textContent === 'Provider Writer'`);
+  assert.equal(await evaluate(`appFixture.creditRequests.size`), 2, 'existing writer metadata skips native requests');
   await writeFile(resolve(out, 'report.json'), JSON.stringify({ reports, errors }, null, 2));
   assert.equal(errors.length, 0, 'no runtime exceptions');
   for (const report of reports) {
@@ -355,7 +542,7 @@ try {
         `${report.width}px ${report.timing}: text clipped: ${line.text}`);
     }
   }
-  console.log('Browser checks passed: 4 widths, 2 heights, line/word wrapping, duet bounds, mouse/keyboard seeking, plain/empty/instrumental states, mount cancellation, reduced motion, Playbar/Topbar, route state, Escape.');
+  console.log('Browser checks passed: 4 widths, 2 heights, line/word wrapping, duet bounds, mouse/keyboard seeking, plain/empty/instrumental states, mount cancellation, reduced motion, Playbar/Topbar, route state, Escape, safe writer credits, provider attribution, late credits and track switches.');
 } finally {
   await send('Browser.close').catch(() => {});
   socket.close();

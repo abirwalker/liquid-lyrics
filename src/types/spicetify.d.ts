@@ -51,6 +51,10 @@ declare namespace Spicetify {
   }
 
   interface API {
+    GraphQL?: {
+      Definitions?: Record<string, unknown>;
+      Request?: (definition: unknown, variables: Record<string, string | number>) => Promise<unknown>;
+    };
     Player: PlayerAPI;
     showNotification(message: string, isError?: boolean): void;
     Platform?: {

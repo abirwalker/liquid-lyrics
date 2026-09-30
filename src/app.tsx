@@ -1,5 +1,6 @@
 import { fetchLyrics } from './lyrics/chain';
 import { createLyricsController, initPlayerListener } from './player/listener';
+import { fetchSpotifySongwriters } from './player/credits';
 import { LyricsView } from './renderer/lyrics-view';
 
 const LIQUID_ICON = `
@@ -169,14 +170,21 @@ async function main() {
     }
   });
 
+  let trackVersion = 0;
   const controller = createLyricsController(fetchLyrics, {
     onTrackChangeStarted: (item, query) => {
+      trackVersion++;
       lyricsView.updateTrack(item);
       if (query) lyricsView.setLoading();
       else lyricsView.setLyrics(null);
     },
-    onLyricsLoaded: (result) => {
+    onLyricsLoaded: (result, query) => {
       lyricsView.setLyrics(result);
+      if (!result || result.instrumental || result.songwriters?.length || !query.spotifyId) return;
+      const version = trackVersion;
+      void fetchSpotifySongwriters(query.spotifyId).then(songwriters => {
+        if (version === trackVersion) lyricsView.setSongwriters(songwriters);
+      });
     },
   });
 

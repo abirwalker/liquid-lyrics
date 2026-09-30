@@ -1,5 +1,5 @@
 import type { LyricsLine, LyricsProvider, LyricsQuery, LyricsResult, LyricsSegment } from '../../types/types';
-import { isRecord, isValidResult, normalizeCollapsedTiming } from '../../types/types';
+import { isRecord, isValidResult, normalizeCollapsedTiming, getSongwriters } from '../../types/types';
 import { cleanTitle, getPrimaryArtist } from '../cleaner';
 import { normalizeMatchText, scoreCandidate } from './matching';
 
@@ -58,7 +58,9 @@ export function adaptLyricsPlus(body: unknown, query: LyricsQuery): LyricsResult
   }) === null) return null;
   const lines = body.lyrics.map(lineFromBody).filter((line): line is LyricsLine => line !== null);
   lines.sort((a, b) => (a.startMs ?? Number.MAX_SAFE_INTEGER) - (b.startMs ?? Number.MAX_SAFE_INTEGER));
-  const result: LyricsResult = { source: 'lyricsplus', instrumental: false, lines };
+  const songwriters = getSongwriters(metadata.songWriters);
+  const result: LyricsResult = { source: 'lyricsplus', instrumental: false, lines,
+    ...(songwriters.length ? { songwriters } : {}) };
   return isValidResult(result) ? normalizeCollapsedTiming(result) : null;
 }
 

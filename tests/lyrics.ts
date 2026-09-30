@@ -12,6 +12,7 @@ import { LyricsCache, getCacheKeys, normalizeString } from '../src/storage/cache
 import { extractQuery } from '../src/player/listener';
 import { cleanTitle } from '../src/lyrics/cleaner';
 import { runBudgetChecks } from './request-budget';
+import { runCreditChecks } from './credits';
 
 export function runIpadChecks(bini: unknown, lrc: unknown) {
   const biniResult = fromTTML('fixture', bini);
@@ -638,5 +639,6 @@ export async function runBoundaryChecks() {
     (globalThis as any).Spicetify = originalSpicetify;
   }
   checks += (await runBudgetChecks()).checks;
+  checks += (await runCreditChecks()).checks;
   return { checks };
 }
