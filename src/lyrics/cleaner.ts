@@ -7,6 +7,7 @@ export function cleanTitle(title: string): string {
     .replace(/[\(\[]with\s+[^\)\]]+[\)\]]/gi, '')
     .replace(/[\(\[](?:remastered|remaster|bonus track|deluxe edition|anniversary edition)[^\)\]]*[\)\]]/gi, '')
     .replace(/\s*-\s*(?:remastered|remaster|\d{4}\s+remaster|single version|radio edit|original mix|bonus track).*/gi, '')
+    .replace(/\s*[-–—]\s*from\s+["“][^"”]+["”]\s*$/i, '')
     .replace(/\s+(?:feat|ft)\.?\s+.*/gi, '')
     .trim();
 }

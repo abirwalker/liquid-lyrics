@@ -4,6 +4,7 @@ import { fromTTML } from '../formats';
 import { scoreCandidate } from './matching';
 
 const API = 'https://api.amll.dev/v1/lyrics';
+const unavailable = new Error('AMLL unavailable');
 
 interface AmllItem {
   id?: number | string;
@@ -32,6 +33,7 @@ async function request(url: string, signal?: AbortSignal): Promise<unknown> {
   const timeout = AbortSignal.timeout(5000);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(url, { signal: requestSignal, credentials: 'omit' });
+  if (response.status === 429 || response.status >= 500) throw unavailable;
   return response.ok ? response.json() : null;
 }
 
@@ -57,27 +59,23 @@ export function createAmllProvider(): LyricsProvider {
         try {
           const exact = accept(await getItem(new URLSearchParams({ spotifyId: query.spotifyId.trim() }), signal));
           if (exact || signal?.aborted) return exact;
-        } catch {
+        } catch (error) {
+          if (error === unavailable) return staticFallback;
           if (signal?.aborted) return null;
         }
       }
 
       try {
         const params = new URLSearchParams({ musicName: query.song, artistName: query.artist.split(',')[0].trim(), pageSize: '8' });
-        if (query.album) params.set('albumName', query.album);
         const search = async (): Promise<AmllItem[]> => {
           const body = await request(`${API}/search?${params}`, signal);
           const data = isRecord(body) && isRecord(body.data) ? body.data : null;
           return data && Array.isArray(data.items) ? data.items.filter(isRecord) as AmllItem[] : [];
         };
-        let items = await search();
-        if (!items.length && query.album && !signal?.aborted) {
-          params.delete('albumName');
-          items = await search();
-        }
+        const items = await search();
         const ranked = items.map(item => ({ item, score: itemScore(query, item) }))
           .filter((entry): entry is { item: AmllItem; score: number } => entry.score !== null)
-          .sort((a, b) => b.score - a.score).slice(0, 4);
+          .sort((a, b) => b.score - a.score).slice(0, 2);
         for (const { item } of ranked) {
           if (signal?.aborted) return null;
           const itemParams = new URLSearchParams();
@@ -87,11 +85,13 @@ export function createAmllProvider(): LyricsProvider {
           try {
             const result = accept(await getItem(itemParams, signal));
             if (result) return result;
-          } catch {
+          } catch (error) {
+            if (error === unavailable) return staticFallback;
             if (signal?.aborted) return null;
           }
         }
-      } catch {
+      } catch (error) {
+        if (error === unavailable) return staticFallback;
         if (signal?.aborted) return null;
       }
       return staticFallback;

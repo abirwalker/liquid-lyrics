@@ -125,8 +125,9 @@ export async function fetchLyrics(
   let result = await fetchPreferred(query, 'original');
   if (signal?.aborted) return null;
 
-  if (lyricQuality(result) < 3 && cleanQ) {
-    const cleanResult = await fetchPreferred(cleanQ, 'cleaned');
+  if (lyricQuality(result) < 2 && cleanQ) {
+    const record = (attempt: ProviderAttempt) => attempts.push({ ...attempt, query: 'cleaned' });
+    const cleanResult = await runLyricsChain(cleanQ, fallback.filter(provider => provider.id !== 'spotify'), signal, true, record);
     if (signal?.aborted) return null;
     if (lyricQuality(cleanResult) > lyricQuality(result)) result = cleanResult;
   }
