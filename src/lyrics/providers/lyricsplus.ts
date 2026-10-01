@@ -1,7 +1,7 @@
 import type { LyricsLine, LyricsProvider, LyricsQuery, LyricsResult, LyricsSegment } from '../../types/types';
-import { isRecord, isValidResult, normalizeCollapsedTiming } from '../../types/types';
+import { isRecord, isValidResult, normalizeCollapsedTiming, getSongwriters } from '../../types/types';
 import { cleanTitle, getPrimaryArtist } from '../cleaner';
-import { scoreCandidate } from './matching';
+import { normalizeMatchText, scoreCandidate } from './matching';
 
 const API = 'https://lyricsplus.binimum.org/v2/lyrics/get';
 
@@ -58,27 +58,55 @@ export function adaptLyricsPlus(body: unknown, query: LyricsQuery): LyricsResult
   }) === null) return null;
   const lines = body.lyrics.map(lineFromBody).filter((line): line is LyricsLine => line !== null);
   lines.sort((a, b) => (a.startMs ?? Number.MAX_SAFE_INTEGER) - (b.startMs ?? Number.MAX_SAFE_INTEGER));
-  const result: LyricsResult = { source: 'lyricsplus', instrumental: false, lines };
+  const songwriters = getSongwriters(metadata.songWriters);
+  const result: LyricsResult = { source: 'lyricsplus', instrumental: false, lines,
+    ...(songwriters.length ? { songwriters } : {}) };
   return isValidResult(result) ? normalizeCollapsedTiming(result) : null;
+}
+
+function matchesBroadResult(
+  body: unknown, title: string, originalTitle: string, artist: string, expectedDurationMs: number | null,
+): boolean {
+  if (!isRecord(body) || !isRecord(body.metadata)) return false;
+  const metadata = body.metadata;
+  const actualDurationMs = durationMs(metadata.totalDuration);
+  const actualTitle = typeof metadata.title === 'string' ? normalizeMatchText(cleanTitle(metadata.title)) : '';
+  return (actualTitle === normalizeMatchText(title) || actualTitle === normalizeMatchText(originalTitle)) &&
+    typeof metadata.artist === 'string' &&
+    normalizeMatchText(getPrimaryArtist(metadata.artist)) === normalizeMatchText(artist) &&
+    (expectedDurationMs === null || (actualDurationMs !== undefined &&
+      Math.abs(actualDurationMs - expectedDurationMs) <= 4000));
+}
+
+function lookupTitle(song: string, album?: string): string {
+  const title = cleanTitle(song.trim());
+  const separator = title.lastIndexOf(' - ');
+  if (separator < 1) return title;
+  const suffix = normalizeMatchText(title.slice(separator + 3));
+  const normalizedAlbum = normalizeMatchText(album);
+  return suffix === 'spider man into the spider verse' ||
+    (suffix.length >= 8 && normalizedAlbum.startsWith(suffix))
+    ? title.slice(0, separator) : title;
 }
 
 export function createLyricsPlusProvider(): LyricsProvider {
   return {
     id: 'lyricsplus',
     async fetch(query: LyricsQuery, signal?: AbortSignal): Promise<LyricsResult | null> {
-      const title = cleanTitle(query.song.trim());
+      const title = lookupTitle(query.song, query.album);
       const artist = getPrimaryArtist(query.artist.trim());
       if (!title || !artist || signal?.aborted) return null;
       const params = new URLSearchParams({ title, artist });
-      if (query.album) params.set('album', query.album);
-      if (query.durationMs && Number.isFinite(query.durationMs) && query.durationMs > 0) {
-        params.set('duration', String(Math.round(query.durationMs / 1000)));
-      }
+      const expectedDurationMs = typeof query.durationMs === 'number' &&
+        Number.isFinite(query.durationMs) && query.durationMs > 0
+        ? query.durationMs : null;
       const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000);
       try {
         const response = await fetch(`${API}?${params}`, { signal: deadline, credentials: 'omit' });
         if (!response.ok) return null;
-        const result = adaptLyricsPlus(await response.json(), query);
+        const body: unknown = await response.json();
+        if (!matchesBroadResult(body, title, query.song, artist, expectedDurationMs)) return null;
+        const result = adaptLyricsPlus(body, query);
         return deadline.aborted ? null : result;
       } catch {
         return null;

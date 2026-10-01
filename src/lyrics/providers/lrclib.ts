@@ -8,17 +8,7 @@ const HEADERS = { 'Lrclib-Client': 'LiquidLyrics/0.1.0 (https://github.com/abirw
 
 async function request(url: string, signal?: AbortSignal): Promise<Response> {
   const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);
-  let response = await fetch(url, { signal: deadline, credentials: 'omit', headers: HEADERS });
-  if (response.status !== 429) return response;
-  const retryAfter = Number(response.headers.get('Retry-After'));
-  if (!Number.isFinite(retryAfter) || retryAfter < 0 || retryAfter > 3) return response;
-  await new Promise<void>((resolve, reject) => {
-    const onAbort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
-    const timer = setTimeout(() => { deadline.removeEventListener('abort', onAbort); resolve(); }, retryAfter * 1000);
-    deadline.addEventListener('abort', onAbort, { once: true });
-  });
-  response = await fetch(url, { signal: deadline, credentials: 'omit', headers: HEADERS });
-  return response;
+  return fetch(url, { signal: deadline, credentials: 'omit', headers: HEADERS });
 }
 
 export function adaptLrclib(body: unknown, durationMs?: number): LyricsResult | null {
@@ -43,23 +33,24 @@ export function createLrclibProvider(): LyricsProvider {
       let fallback: LyricsResult | null = null;
       try {
         const response = await request(`${LRCLIB_API}/get?${params}`, requestSignal);
+        if (response.status === 429 || response.status >= 500) return null;
         if (response.ok) {
           const result = adaptLrclib(await response.json(), query.durationMs);
           if (result && hasSyncedLyrics(result)) return result;
           fallback = result;
+          if (result?.instrumental) return result;
         }
       } catch {
         if (requestSignal.aborted) return null;
+        return fallback;
       }
 
       const searchParams = new URLSearchParams({ track_name: song, artist_name: artist });
-      if (query.album) searchParams.set('album_name', query.album);
-      const searches = [searchParams];
-      if (query.album) searches.push(new URLSearchParams({ track_name: song, artist_name: artist }));
-      for (const search of searches) {
+      for (const search of [searchParams]) {
         if (requestSignal.aborted) return null;
         try {
           const response = await request(`${LRCLIB_API}/search?${search}`, requestSignal);
+          if (response.status === 429 || response.status >= 500) return fallback;
           if (!response.ok) continue;
           const body: unknown = await response.json();
           if (!Array.isArray(body)) continue;
@@ -77,6 +68,7 @@ export function createLrclibProvider(): LyricsProvider {
           }
         } catch {
           if (requestSignal.aborted) return null;
+          return fallback;
         }
       }
       return fallback;

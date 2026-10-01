@@ -1,5 +1,5 @@
 import type { LyricsLine as Line, LyricsSegment as Segment, LyricsResult } from '../types/types';
-import { isValidResult, normalizeCollapsedTiming } from '../types/types';
+import { isValidResult, normalizeCollapsedTiming, getSongwriters } from '../types/types';
 
 function time(value: string | null): number | null {
   if (value === null) return null;
@@ -157,7 +157,15 @@ export function fromTTML(source: string, input: unknown): LyricsResult | null {
         agent: inheritedAgent(paragraph) });
     }
     lines.sort((a, b) => (a.startMs ?? Number.MAX_SAFE_INTEGER) - (b.startMs ?? Number.MAX_SAFE_INTEGER));
-    const result = { source, instrumental: false, lines };
+    const head = Array.from(xml.documentElement.children).find(element => element.localName === 'head');
+    const writerNodes = head ? Array.from(head.getElementsByTagNameNS('*', 'songwriter')) : [];
+    const songwriters = getSongwriters(writerNodes.filter(element =>
+      element.parentElement?.localName === 'songwriters' &&
+      ['http://music.apple.com/lyric-ttml-internal', 'http://itunes.apple.com/lyric-ttml-extensions',
+        'http://lrc.red/lyric-ttml-internal'].includes(element.namespaceURI ?? ''))
+      .map(element => element.textContent));
+    const result = { source, instrumental: false, lines,
+      ...(songwriters.length ? { songwriters } : {}) };
     return isValidResult(result) ? normalizeCollapsedTiming(result) : null;
   } catch { return null; }
 }

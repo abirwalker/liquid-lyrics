@@ -2,7 +2,7 @@ import { adaptLyricsPlus, createLyricsPlusProvider } from '../src/lyrics/provide
 import { adaptLrclib, createLrclibProvider } from '../src/lyrics/providers/lrclib';
 import { adaptSpotifyLyrics, createSpotifyLyricsProvider } from '../src/lyrics/providers/spotify';
 import { createAmllProvider } from '../src/lyrics/providers/amll';
-import { createBiniLyricsProvider, createBiniSearchPlan, createBiniSearchQueries, selectBiniItems } from '../src/lyrics/providers/binilyrics';
+import { createBiniLyricsProvider, createBiniSearchPlan, selectBiniItems } from '../src/lyrics/providers/binilyrics';
 import { scoreCandidate } from '../src/lyrics/providers/matching';
 import { fromLRC, fromPlain, fromTTML } from '../src/lyrics/formats';
 import { isValidResult as validLyrics } from '../src/types/types';
@@ -10,6 +10,9 @@ import type { LyricsResult as Lyrics, LyricsProvider } from '../src/types/types'
 import { fetchLyricsChain, createDefaultChain, fetchLyrics } from '../src/lyrics/chain';
 import { LyricsCache, getCacheKeys, normalizeString } from '../src/storage/cache';
 import { extractQuery } from '../src/player/listener';
+import { cleanTitle } from '../src/lyrics/cleaner';
+import { runBudgetChecks } from './request-budget';
+import { runCreditChecks } from './credits';
 
 export function runIpadChecks(bini: unknown, lrc: unknown) {
   const biniResult = fromTTML('fixture', bini);
@@ -139,7 +142,7 @@ export async function runBoundaryChecks() {
     { titles: ['Test'], artists: ['Artist'], durationMs: 240000 }) === null, 'Wrong duration rejected');
   const cjkQuery = { song: '芒种', artist: '音阙诗听, 赵方婧', durationMs: 175000 };
   const cjkPlan = createBiniSearchPlan(cjkQuery)!;
-  check(createBiniSearchQueries(cjkQuery, cjkPlan)[0] === '芒种 音阙诗听' &&
+  check(cjkPlan.song === '芒种' && cjkPlan.artist === '音阙诗听' &&
     selectBiniItems([{ track_name: '芒种', artist_name: '音阙诗听', duration: 175, lyricsUrl: 'https://example.com/a.ttml' }], cjkQuery).length === 1,
   'CJK tracks use artist matching without a unique title-only result');
   const lyricsPlusFixture = { type: 'Word', metadata: { title: 'Test', artist: 'Artist', totalDuration: '3:20' },
@@ -234,8 +237,97 @@ export async function runBoundaryChecks() {
     };
     check((await createLyricsPlusProvider().fetch({ ...query, durationMs: 200000 }))?.lines[0].timing === 'word' &&
       new URL(lyricsPlusUrl).searchParams.get('title') === 'Test' &&
-      new URL(lyricsPlusUrl).searchParams.get('duration') === '200',
-    'LyricsPlus metadata request yields word timing');
+      !new URL(lyricsPlusUrl).searchParams.has('duration'),
+    'LyricsPlus validates a title and artist lookup locally');
+    const soundtrackTitle = 'Love Me Like You Do - From "Fifty Shades Of Grey"';
+    const soundtrackUrls: URL[] = [];
+    globalThis.fetch = async input => {
+      soundtrackUrls.push(new URL(String(input)));
+      return Response.json({ ...lyricsPlusFixture,
+        metadata: { title: 'Love Me Like You Do', artist: 'Ellie Goulding', totalDuration: '4:10' } });
+    };
+    check(cleanTitle(soundtrackTitle) === 'Love Me Like You Do' &&
+      cleanTitle('From Here to You') === 'From Here to You' &&
+      (await createLyricsPlusProvider().fetch({ song: soundtrackTitle, artist: 'Ellie Goulding',
+        album: 'Fifty Shades Of Grey (Original Motion Picture Soundtrack)', durationMs: 250000 }))?.lines[0].timing === 'word' &&
+      soundtrackUrls.length === 1 &&
+      soundtrackUrls[0].searchParams.toString() === 'title=Love+Me+Like+You+Do&artist=Ellie+Goulding',
+    'Soundtrack suffix is removed before one LyricsPlus lookup');
+    globalThis.fetch = async () => Response.json({ ...lyricsPlusFixture,
+      metadata: { title: soundtrackTitle, artist: 'Ellie Goulding', totalDuration: '4:10' } });
+    check((await createLyricsPlusProvider().fetch({ song: soundtrackTitle,
+      artist: 'Ellie Goulding', durationMs: 250000 }))?.lines[0].timing === 'word',
+    'LyricsPlus accepts a response that retains the quoted soundtrack suffix');
+    const sunflowerUrls: URL[] = [];
+    globalThis.fetch = async input => {
+      sunflowerUrls.push(new URL(String(input)));
+      return Response.json({ ...lyricsPlusFixture,
+        metadata: { title: 'Sunflower (Spider-Man: Into the Spider-Verse)',
+          artist: 'Post Malone, Swae Lee', totalDuration: '2:38.040' } });
+    };
+    check((await createLyricsPlusProvider().fetch({
+      song: 'Sunflower - Spider-Man: Into the Spider-Verse', artist: 'Post Malone, Swae Lee',
+      album: 'Sunflower - Single',
+      durationMs: 158000,
+    }))?.lines[0].timing === 'word' && sunflowerUrls.length === 1 &&
+      sunflowerUrls[0].searchParams.get('title') === 'Sunflower' &&
+      sunflowerUrls[0].searchParams.get('artist') === 'Post Malone',
+    'LyricsPlus omits the known Spider-Verse movie credit with a different album');
+    sunflowerUrls.length = 0;
+    check((await createLyricsPlusProvider().fetch({
+      song: 'Sunflower - Spider-Man: Into the Spider-Verse', artist: 'Post Malone',
+      durationMs: 158000,
+    }))?.lines[0].timing === 'word' && sunflowerUrls.length === 1 &&
+      sunflowerUrls[0].searchParams.get('title') === 'Sunflower',
+    'LyricsPlus omits the movie credit when album metadata is missing');
+    globalThis.fetch = async () => Response.json({ ...lyricsPlusFixture,
+      metadata: { title: 'Sunflower (Different Film)', artist: 'Post Malone, Swae Lee',
+        totalDuration: '2:38.040' } });
+    check(await createLyricsPlusProvider().fetch({
+      song: 'Sunflower - Spider-Man: Into the Spider-Verse', artist: 'Post Malone',
+      durationMs: 158000,
+    }) === null, 'LyricsPlus rejects a different movie title even with matching artist and duration');
+    globalThis.fetch = async input => {
+      sunflowerUrls.push(new URL(String(input)));
+      return Response.json({ ...lyricsPlusFixture,
+        metadata: { title: 'Sunflower', artist: 'Post Malone', totalDuration: '2:38' } });
+    };
+    sunflowerUrls.length = 0;
+    check((await createLyricsPlusProvider().fetch({
+      song: 'Sunflower - Film Title', artist: 'Post Malone',
+      album: 'Film Title (Original Motion Picture Soundtrack)', durationMs: 158000,
+    }))?.lines[0].timing === 'word' && sunflowerUrls[0].searchParams.get('title') === 'Sunflower',
+    'LyricsPlus omits another subtitle only when the album confirms it');
+    sunflowerUrls.length = 0;
+    check(await createLyricsPlusProvider().fetch({
+      song: 'Run - Away', artist: 'Post Malone', album: 'Unrelated Album', durationMs: 158000,
+    }) === null && sunflowerUrls[0].searchParams.get('title') === 'Run - Away',
+    'LyricsPlus preserves a title suffix unrelated to the album');
+    const strictQuery = { ...query, album: 'Other release', durationMs: 200000 };
+    let missingAttempts = 0;
+    globalThis.fetch = async () => { missingAttempts++; return new Response(null, { status: 404 }); };
+    check(await createLyricsPlusProvider().fetch(strictQuery) === null && missingAttempts === 1,
+      'LyricsPlus does not retry a missing title and artist lookup');
+    for (const [metadata, mismatch] of [
+      [{ title: 'Different' }, 'title'],
+      [{ artist: 'Different' }, 'artist'],
+      [{ totalDuration: '3:28' }, 'duration'],
+      [{ totalDuration: '' }, 'missing duration'],
+    ] as const) {
+      let rejectedAttempts = 0;
+      globalThis.fetch = async () => { rejectedAttempts++; return Response.json({ ...lyricsPlusFixture,
+        metadata: { ...lyricsPlusFixture.metadata, ...metadata } }); };
+      check(await createLyricsPlusProvider().fetch(strictQuery) === null && rejectedAttempts === 1,
+        `LyricsPlus rejects a recording with mismatched ${mismatch} without retrying`);
+    }
+    let serverErrorAttempts = 0;
+    globalThis.fetch = async () => { serverErrorAttempts++; return new Response(null, { status: 500 }); };
+    check(await createLyricsPlusProvider().fetch(strictQuery) === null && serverErrorAttempts === 1,
+      'LyricsPlus does not retry server errors');
+    let rateLimitAttempts = 0;
+    globalThis.fetch = async () => { rateLimitAttempts++; return new Response(null, { status: 429 }); };
+    check(await createLyricsPlusProvider().fetch(strictQuery) === null && rateLimitAttempts === 1,
+      'LyricsPlus falls through after one rate-limited request');
     const biniLookupRequests: string[] = [];
     globalThis.fetch = async input => {
       const url = new URL(String(input));
@@ -251,9 +343,35 @@ export async function runBoundaryChecks() {
       biniLookupRequests.filter(url => url.includes('lyrics-api.binimum.org')).length === 1 &&
       new URL(biniLookupRequests[0]).searchParams.get('track') === 'Test' &&
       new URL(biniLookupRequests[0]).searchParams.get('artist') === 'Artist' &&
-      new URL(biniLookupRequests[0]).searchParams.get('duration') === '201' &&
+      !new URL(biniLookupRequests[0]).searchParams.has('duration') &&
       !new URL(biniLookupRequests[0]).searchParams.has('album'),
-    'Bini sends one duration-aware track lookup without album on a synced hit');
+    'Bini sends one track and artist lookup, then matches duration locally');
+    const loveMeNotCalls: string[] = [];
+    globalThis.fetch = async input => {
+      const url = String(input);
+      loveMeNotCalls.push(url);
+      if (url.startsWith('https://lyrics-api.binimum.org/')) return Response.json({ results: [
+        { track_name: 'Love Me Not (feat. Rex Orange County)', artist_name: 'Ravyn Lenae',
+          album_name: 'Love Me Not (feat. Rex Orange County) - Single', duration: 188,
+          timing_type: 'word', lyricsUrl: 'https://lrc.red/s/featured.ttml' },
+        { track_name: 'Love Me Not (Mixed)', artist_name: 'Ravyn Lenae',
+          album_name: "Today's Hits (DJ Mix)", duration: 145,
+          timing_type: 'none', lyricsUrl: 'https://lrc.red/s/mixed.ttml' },
+        { track_name: 'Love Me Not', artist_name: 'Ravyn Lenae',
+          album_name: "Bird's Eye", duration: 213,
+          timing_type: 'word', lyricsUrl: 'https://lrc.red/s/exact.ttml' },
+      ] });
+      if (url === 'https://lrc.red/s/exact.ttml') {
+        return new Response('<tt><p begin="1" end="2"><span begin="1" end="2">Love</span></p></tt>');
+      }
+      throw new Error(`Wrong lyric candidate requested: ${url}`);
+    };
+    check((await createBiniLyricsProvider().fetch({ song: 'Love Me Not', artist: 'Ravyn Lenae',
+      album: "Bird's Eye", durationMs: 213000 }))?.lines[0].timing === 'word' &&
+      loveMeNotCalls.length === 2 &&
+      new URL(loveMeNotCalls[0]).searchParams.toString() === 'track=Love+Me+Not&artist=Ravyn+Lenae' &&
+      loveMeNotCalls[1] === 'https://lrc.red/s/exact.ttml',
+    'One Bini lookup selects the exact recording from featured and mixed variants');
     const biniWordRequests: string[] = [];
     globalThis.fetch = async input => {
       const url = new URL(String(input));
@@ -276,21 +394,17 @@ export async function runBoundaryChecks() {
       const url = new URL(String(input));
       biniFallbackRequests.push(url.href);
       if (url.hostname === 'lyrics-api.binimum.org') {
-        return Response.json({ results: url.pathname === '/'
-          ? [{ track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/static.ttml' }]
-          : [
-            { track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/static.ttml' },
-            { track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/synced.ttml' },
-          ] });
+        return Response.json({ results: [
+          { track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/static.ttml' },
+        ] });
       }
       if (url.pathname === '/static.ttml') return new Response('<tt><p>Static</p></tt>');
-      if (url.pathname === '/synced.ttml') return new Response(ttml);
       throw new Error('Unexpected Bini URL');
     };
-    check((await createBiniLyricsProvider().fetch(query))?.lines[0].timing === 'line' &&
-      biniFallbackRequests.filter(url => url.includes('lyrics-api.binimum.org')).length === 2 &&
+    check((await createBiniLyricsProvider().fetch(query))?.lines[0].timing === 'none' &&
+      biniFallbackRequests.filter(url => url.includes('lyrics-api.binimum.org')).length === 1 &&
       biniFallbackRequests.filter(url => url === 'https://example.com/static.ttml').length === 1,
-    'Bini searches after a static lookup without refetching its lyric file');
+    'Bini keeps the static result without a second metadata query');
     globalThis.fetch = async input => {
       const url = String(input);
       if (url.startsWith('https://lyrics-api.binimum.org/')) {
@@ -389,8 +503,8 @@ export async function runBoundaryChecks() {
       throw new Error('Later provider should not run');
     };
     const afterBiniFailure = await fetchLyrics({ ...query, skipCache: true }, undefined, new LyricsCache());
-    check(biniAttempts > 1 && afterBiniFailure?.source === 'lyricsplus' && afterBiniFailure.lines[0].timing === 'word',
-      'Bini CORS failures fall through to LyricsPlus word timing');
+    check(biniAttempts === 1 && afterBiniFailure?.source === 'lyricsplus' && afterBiniFailure.lines[0].timing === 'word',
+      'Bini network failures stop its variants and fall through to LyricsPlus');
     const staticCache = new LyricsCache();
     await staticCache.set(query, { ...good, source: 'lrclib' });
     const upgraded = await fetchLyrics(query, undefined, staticCache);
@@ -399,7 +513,7 @@ export async function runBoundaryChecks() {
     let mixedBiniAttempts = 0;
     globalThis.fetch = async input => {
       const url = String(input);
-      if (url.includes('/getLyrics?')) {
+      if (url.startsWith('https://lyrics-api.binimum.org/')) {
         mixedBiniAttempts++;
         if (mixedBiniAttempts === 1) throw new TypeError('CORS blocked');
         return Response.json({ results: [{ track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/test.ttml' }] });
@@ -407,8 +521,8 @@ export async function runBoundaryChecks() {
       if (url === 'https://example.com/test.ttml') return new Response(ttml);
       throw new Error('Later provider should not run');
     };
-    check((await createBiniLyricsProvider().fetch(query))?.lines[0].timing === 'line' && mixedBiniAttempts > 1,
-      'Bini continues search after an earlier CORS failure');
+    check(await createBiniLyricsProvider().fetch(query) === null && mixedBiniAttempts === 1,
+      'Bini does not repeat metadata searches after a network failure');
     globalThis.fetch = async input => {
       const url = new URL(String(input));
       if (url.pathname.endsWith('/get') && url.searchParams.has('spotifyId')) {
@@ -425,18 +539,15 @@ export async function runBoundaryChecks() {
     globalThis.fetch = async input => {
       const url = new URL(String(input));
       if (url.pathname.endsWith('/search')) {
-        if (url.searchParams.has('albumName')) {
-          albumFiltered = true;
-          return Response.json({ data: { items: [] } });
-        }
+        albumFiltered = url.searchParams.has('albumName');
         return Response.json({ data: { items: [
           { id: 7, musicNames: ['Test'], artistNames: ['Artist'] },
         ] } });
       }
       return Response.json({ data: { lyrics: ttml } });
     };
-    check(albumFiltered === false && (await createAmllProvider().fetch({ ...query, album: 'Different release' }))?.lines[0].timing === 'line' && albumFiltered,
-      'AMLL retries without album when its intersection search is empty');
+    check((await createAmllProvider().fetch({ ...query, album: 'Different release' }))?.lines[0].timing === 'line' && !albumFiltered,
+      'AMLL searches once without a restrictive album filter');
     globalThis.fetch = async input => {
       const url = new URL(String(input));
       return url.pathname.endsWith('/get')
@@ -527,5 +638,7 @@ export async function runBoundaryChecks() {
     globalThis.fetch = originalFetch;
     (globalThis as any).Spicetify = originalSpicetify;
   }
+  checks += (await runBudgetChecks()).checks;
+  checks += (await runCreditChecks()).checks;
   return { checks };
 }

@@ -19,6 +19,7 @@ export interface LyricsResult {
   instrumental: boolean;
   lines: LyricsLine[];
   cached?: boolean;
+  songwriters?: string[];
 }
 
 export interface LyricsQuery {
@@ -59,6 +60,12 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+export function getSongwriters(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((name): name is string => typeof name === 'string')
+    .map(name => name.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+}
+
 function isTime(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
@@ -71,6 +78,8 @@ function validRange(start: unknown, end: unknown): boolean {
 export function isValidResult(value: unknown): value is LyricsResult {
   if (!isRecord(value) || typeof value.source !== 'string' || !value.source.trim() ||
       typeof value.instrumental !== 'boolean' || !Array.isArray(value.lines)) return false;
+  if (value.songwriters !== undefined && (!Array.isArray(value.songwriters) ||
+      !value.songwriters.every(name => typeof name === 'string' && name.trim()))) return false;
   if (value.instrumental) return value.lines.length === 0;
   if (!value.lines.length) return false;
   let previousStart = -1;
