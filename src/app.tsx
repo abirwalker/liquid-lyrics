@@ -65,6 +65,14 @@ async function main() {
 
   const EXTRA_CONTROLS_SEL = '.main-nowPlayingBar-extraControls';
 
+  function findPlaybarControls(): HTMLElement | null {
+    const playbar = document.querySelector('[data-testid="now-playing-bar"], .Root__now-playing-bar');
+    const nativeControl = playbar?.querySelector<HTMLElement>(
+      'button[data-testid="lyrics-button"], button[data-testid="pip-toggle-button"], button[data-testid="fullscreen-mode-button"]',
+    );
+    return nativeControl?.parentElement ?? document.querySelector<HTMLElement>(EXTRA_CONTROLS_SEL);
+  }
+
   function makeBtn(icon: string, title: string, onClick: () => void): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.className = 'VL-PlaybarBtn ll-toggle';
@@ -95,9 +103,15 @@ async function main() {
   }
 
   function injectButtons(): void {
-    const container = document.querySelector<HTMLElement>(EXTRA_CONTROLS_SEL);
+    const container = findPlaybarControls();
     if (!container) return;
     if (toggleElement && container.contains(toggleElement)) return;
+
+    if (playbarBtn) {
+      playbarBtn.deregister();
+      playbarBtn = null;
+      toggleElement = null;
+    }
 
     if (!toggleElement) {
       toggleElement = makeBtn(LIQUID_ICON, 'Liquid Lyrics', () => toggleLyrics());
@@ -108,7 +122,7 @@ async function main() {
 
   function observePlaybar(): void {
     const observer = new MutationObserver(() => {
-      const container = document.querySelector<HTMLElement>(EXTRA_CONTROLS_SEL);
+      const container = findPlaybarControls();
       if (container && (!toggleElement || !container.contains(toggleElement))) {
         injectButtons();
       }

@@ -485,6 +485,33 @@ try {
   assert.ok(Math.abs(interludeScroll.bottom - interludeScroll.height * .7) < 2, 'interior dots preserve the manual end limit');
   await command('Emulation.setDeviceMetricsOverride', { width: 1148, height: 964, deviceScaleFactor: 1, mobile: false });
   await evaluate('fixture.resize(800)');
+  for (const mode of ['?modern', '?legacy', '?detached']) {
+    await command('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/app${mode}` });
+    await wait(600);
+    if (mode === '?detached') {
+      assert.equal(await evaluate("document.querySelectorAll('.ll-toggle').length"), 0, 'fallback starts detached');
+      await evaluate('appFixture.mountControls()');
+      await wait(100);
+    }
+    assert.equal(await evaluate("document.querySelectorAll('.ll-toggle').length"), 1, `${mode}: one visible button`);
+    assert.equal(await evaluate("document.querySelector('.ll-toggle').getAttribute('aria-pressed')"), 'true', 'initial active state');
+    assert.equal(await evaluate("document.querySelector('.ll-toggle').dataset.tooltip"), 'Liquid Lyrics', 'tooltip retained');
+    assert.equal(await evaluate("document.querySelector('.ll-toggle').getBoundingClientRect().width"), 32, 'button has visible bounds');
+    await evaluate("document.querySelector('.ll-toggle').click()");
+    assert.equal(await evaluate('appFixture.history.location.pathname'), '/', 'button closes lyric route');
+    await evaluate('appFixture.mountControls()');
+    await wait(100);
+    assert.equal(await evaluate("document.querySelectorAll('.ll-toggle').length"), 1, 'controls replacement restores one button');
+    assert.equal(await evaluate("document.querySelector('.ll-toggle').getAttribute('aria-pressed')"), 'false', 'replacement preserves inactive state');
+    assert.equal(await evaluate("document.querySelectorAll('[data-testid=control-button-queue]').length"), 1, 'native queue control preserved');
+    await evaluate("document.querySelector('.ll-toggle').click()");
+    assert.equal(await evaluate('appFixture.history.location.pathname'), '/liquid-lyrics', 'remounted button opens view');
+    await evaluate("appFixture.mountControls('alternate')");
+    await wait(100);
+    assert.equal(await evaluate("document.querySelectorAll('.ll-toggle').length"), 1, 'mounts beside miniplayer if lyrics control is absent');
+    await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', {key:'l',ctrlKey:true,altKey:true}))");
+    assert.equal(await evaluate('appFixture.history.location.pathname'), '/', 'keyboard shortcut still closes view');
+  }
   for (const mode of ['', '?fallback=1', '?topbar=1']) {
     await command('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/app${mode}` });
     await wait(600);

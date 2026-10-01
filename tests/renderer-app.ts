@@ -24,10 +24,23 @@ class Button {
   }
   get active() { return this.state; }
   set active(value: boolean) { this.state = value; this.element.style.color = value ? '#1ed760' : '#ddd'; }
-  register() { registerCalls++; document.querySelector('footer')!.append(this.element); }
+  register() {
+    registerCalls++;
+    if (!parameters.has('detached')) document.querySelector('footer')!.append(this.element);
+  }
   deregister() { this.element.remove(); }
 }
 const parameters = new URLSearchParams(location.search);
+function mountControls(kind: 'modern' | 'legacy' | 'alternate' = 'modern') {
+  const footer = document.querySelector('footer')!;
+  footer.setAttribute('data-testid', 'now-playing-bar');
+  footer.className = 'Root__now-playing-bar';
+  footer.innerHTML = kind === 'legacy'
+    ? '<div class="main-nowPlayingBar-extraControls"><button data-testid="control-button-queue">Queue</button></div>'
+    : `<div class="updated-controls"><button data-testid="${kind === 'alternate' ? 'pip-toggle-button' : 'lyrics-button'}">Native control</button><button data-testid="control-button-queue">Queue</button></div>`;
+}
+if (parameters.has('modern')) mountControls();
+if (parameters.has('legacy')) mountControls('legacy');
 const playerEvents = new Map<string, Array<(event?: unknown) => void>>();
 const creditRequests = new Map<string, (response: unknown) => void>();
 if (parameters.has('credits')) {
@@ -63,12 +76,14 @@ setTimeout(() => {
       }),
     } : undefined,
     showNotification: () => {},
+    Tippy: (element, options) => { (element as HTMLElement).dataset.tooltip = String(options.content); },
     Platform: parameters.has('fallback') ? undefined : { History: history },
     Playbar: parameters.has('topbar') ? undefined : { Button },
     Topbar: { Button: TopbarButton },
   };
 }, 150);
 Object.assign(window, { appFixture: { history, registrations, registerCalls: () => registerCalls,
+  mountControls,
   creditRequests,
   changeTrack: (id: string, name = 'Fixture') => {
     globalThis.Spicetify!.Player.data!.item = { uri: `spotify:track:${id}`, name,
