@@ -1,14 +1,16 @@
 {
   "name": "liquid-lyrics",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "spicetify-creator dev",
     "build": "spicetify-creator build",
+    "postbuild": "node scripts/prepare-marketplace.mjs",
+    "version": "npm run build",
     "test:lyrics": "node scripts/test-lyrics.mjs",
     "test:renderer": "node scripts/test-renderer.mjs"
   },
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "devDependencies": {
     "@spicemod/creator": "^0.0.38",
     "@types/node": "^25.9.1",

@@ -2,9 +2,10 @@ import type { LyricsProvider, LyricsQuery, LyricsResult } from '../../types/type
 import { hasSyncedLyrics, isRecord } from '../../types/types';
 import { fromLRC, fromPlain } from '../formats';
 import { scoreCandidate } from './matching';
+import { version } from '../../../package.json';
 
 const LRCLIB_API = 'https://lrclib.net/api';
-const HEADERS = { 'Lrclib-Client': 'LiquidLyrics/0.1.0 (https://github.com/abirwalker/liquid-lyrics)' };
+const HEADERS = { 'Lrclib-Client': `LiquidLyrics/${version} (https://github.com/abirwalker/liquid-lyrics)` };
 
 async function request(url: string, signal?: AbortSignal): Promise<Response> {
   const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);

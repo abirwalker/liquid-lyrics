@@ -59,3 +59,9 @@ Liquid Lyrics checks BiniLyrics and LyricsPlus first. If neither returns synced 
 ## Credits
 
 The lyric player and animated background use [AMLL Core](https://github.com/amll-dev/applemusic-like-lyrics). Thanks to [Binimum](https://github.com/binimum) for running the [BiniLyrics](https://lyrics-api.binimum.org) and [LyricsPlus](https://lyricsplus.binimum.org) servers used here. LyricsPlus is [ibratabian17's project](https://github.com/ibratabian17/lyricsplus). Spotify, [AMLL](https://github.com/amll-dev), and [LRCLIB](https://lrclib.net) provide the other lyric fallbacks.
+
+## License
+
+Copyright (C) 2026 abirwalker. Liquid Lyrics is licensed under [AGPL-3.0-only](LICENSE), matching AMLL Core's license. It is provided without warranty.
+
+This license covers the extension's code. Third-party dependencies retain their own licenses; lyric content and access to provider services are governed separately by their respective rights and terms.
