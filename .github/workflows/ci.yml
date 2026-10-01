@@ -20,6 +20,8 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - name: Check release metadata
+        run: node scripts/prepare-release.mjs
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx tsc -p tests/tsconfig.json --noEmit
