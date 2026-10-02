@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.3] - 2026-10-03
+
+- Keep the cover hidden when switching from an open Now Playing view to Queue, and visible when Queue opens from a closed Now Playing view.
+- Preserve the cover state through Queue loading so the lyric layout does not briefly jump.
+
+## [1.1.2] - 2026-10-03
+
+- Keep the artwork panel visible while Queue opens, avoiding a brief jump in the lyric layout.
+
+## [1.1.1] - 2026-10-03
+
+- Link the track title, artists and album name to their Spotify pages.
+
 ## [1.1.0] - 2026-10-02
 
 - Show album artwork, track title and artists beside the lyrics when Now Playing is hidden.

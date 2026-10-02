@@ -85,9 +85,9 @@ setTimeout(() => {
 Object.assign(window, { appFixture: { history, registrations, registerCalls: () => registerCalls,
   mountControls,
   creditRequests,
-  changeTrack: (id: string, name = 'Fixture') => {
+  changeTrack: (id: string, name = 'Fixture', details: Spicetify.PlayerItem = {}) => {
     globalThis.Spicetify!.Player.data!.item = { uri: `spotify:track:${id}`, name,
-      artists: [{ name: 'Fixture Artist' }], duration: { milliseconds: 6000 } };
+      artists: [{ name: 'Fixture Artist' }], duration: { milliseconds: 6000 }, ...details };
     playerEvents.get('songchange')?.forEach(callback => callback());
   },
   finishCredits: (id: string, writer: string) => {

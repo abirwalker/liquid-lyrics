@@ -159,6 +159,28 @@ button[data-testid="lyrics-button"],
   object-fit: cover;
 }
 
+.ll-track-title a,
+.ll-track-artist a,
+.ll-track-album a {
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+}
+
+.ll-track-title a:hover,
+.ll-track-artist a:hover,
+.ll-track-album a:hover {
+  text-decoration: underline;
+  text-underline-offset: .15em;
+}
+
+.ll-track-title a:focus-visible,
+.ll-track-artist a:focus-visible,
+.ll-track-album a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
 .ll-track-title,
 .ll-track-artist {
   margin: 0;
@@ -174,6 +196,7 @@ button[data-testid="lyrics-button"],
   font-weight: 600;
   line-height: 1.15;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
 }
 
 .ll-track-artist {
@@ -183,6 +206,7 @@ button[data-testid="lyrics-button"],
   font-weight: 400;
   line-height: 1.3;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 /* Keep white lyrics legible over pale artwork without changing its palette. */
