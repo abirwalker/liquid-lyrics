@@ -232,7 +232,7 @@ button[data-testid="lyrics-button"],
   mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
   --amll-lp-color: #fff;
   --amll-lp-hover-bg-color: rgb(255 255 255 / 6%);
-  --amll-lp-font-size: clamp(28px, calc(4.8cqw * var(--ll-window-zoom, 1)), 58px);
+  --amll-lp-font-size: var(--ll-lyric-size, 28px);
   --lyric-line-padding-x: clamp(24px, 5cqw, 64px);
 }
 
@@ -343,7 +343,7 @@ button[data-testid="lyrics-button"],
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 48px max(24px, calc((100% - 880px) / 2));
-  font-size: clamp(28px, calc(4.8cqw * var(--ll-window-zoom, 1)), 58px);
+  font-size: var(--ll-lyric-size, 28px);
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: -.015em;

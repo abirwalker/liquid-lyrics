@@ -588,6 +588,12 @@ try {
       })()`);
       assert.ok(Math.abs(size.dpr - zoom) < .01, 'native browser zoom is active');
       assert.ok(size.visible && size.fits, `${zoom}x ${timing}: zoom leaves artwork and lyrics readable`);
+      await evaluate(`document.getElementById('artwork-sidebar').setAttribute('aria-hidden','false')`);
+      await wait(100);
+      const noCoverFont = await evaluate(`parseFloat(getComputedStyle(document.querySelector('${timing === 'none' ? '.ll-plain-lyrics' : '.FmKaba_lyricMainLine'}')).fontSize) * devicePixelRatio`);
+      assert.ok(Math.abs(noCoverFont - size.font) < .02, `${zoom}x ${timing}: default font matches the cover font`);
+      await evaluate(`document.getElementById('artwork-sidebar').setAttribute('aria-hidden','true')`);
+      await wait(100);
       if (zoomSizes.has(timing)) {
         const baseline = zoomSizes.get(timing);
         if (zoom > 1) assert.ok(size.cover > baseline.cover * 1.1 && size.font > baseline.font * 1.1,
@@ -600,6 +606,41 @@ try {
     }
   }
   await send('Target.closeTarget', { targetId: settingsTarget });
+  const fontLayoutRestore = await evaluate(`(() => {
+    const root = document.querySelector('.Root__main-view');
+    const sidebar = document.getElementById('artwork-sidebar');
+    const styles = {root:root.getAttribute('style'), sidebar:sidebar.getAttribute('style')};
+    const grid = document.createElement('div'); grid.id='font-layout-grid';
+    grid.style.cssText='display:grid;grid-template-areas:"main-view right-sidebar";grid-template-columns:minmax(0,1fr) 32px;gap:8px';
+    root.before(grid); grid.append(root,sidebar);
+    root.style.gridArea='main-view'; root.style.minWidth='0';
+    sidebar.style.cssText='grid-area:right-sidebar;overflow:hidden';
+    return styles;
+  })()`);
+  for (const [width, height] of [[1438,882], [2116,1242], [3398,1962], [1120,800]]) {
+    await command('Emulation.setDeviceMetricsOverride', { width:width+88, height:height+64, deviceScaleFactor:1, mobile:false });
+    await evaluate(`fixture.resize(${height})`);
+    for (const timing of ['line','word','none']) {
+      await evaluate(`document.getElementById('font-layout-grid').style.gridTemplateColumns='minmax(0,1fr) 32px';
+        document.getElementById('artwork-sidebar').setAttribute('aria-hidden','true');
+        fixture.view.setLyrics(fixture.fixture('${timing}'))`);
+      await wait(300);
+      const readFont = () => evaluate(`parseFloat(getComputedStyle(document.querySelector('${timing === 'none' ? '.ll-plain-lyrics' : '.FmKaba_lyricMainLine'}')).fontSize)`);
+      const referenceFont = await readFont();
+      await evaluate(`document.getElementById('font-layout-grid').style.gridTemplateColumns='minmax(0,1fr) 420px';
+        document.getElementById('artwork-sidebar').setAttribute('aria-hidden','false')`);
+      await wait(100);
+      assert.equal(await artworkVisible(), false, 'NPV opens and hides the artwork');
+      assert.ok(Math.abs(await readFont() - referenceFont) < .02, `${width}px ${timing}: NPV width change preserves font size`);
+    }
+  }
+  await evaluate(`(() => {
+    const styles=${JSON.stringify(fontLayoutRestore)};
+    const root=document.querySelector('.Root__main-view'),sidebar=document.getElementById('artwork-sidebar');
+    const grid=document.getElementById('font-layout-grid'); grid.before(root);document.body.append(sidebar);grid.remove();
+    if(styles.root === null)root.removeAttribute('style');else root.setAttribute('style',styles.root);
+    sidebar.setAttribute('style',styles.sidebar);
+  })()`);
   await evaluate('fixture.resize(800)');
   await command('Emulation.setDeviceMetricsOverride', { width: 1548, height: 964, deviceScaleFactor: 1, mobile: false });
   await evaluate(`(() => {

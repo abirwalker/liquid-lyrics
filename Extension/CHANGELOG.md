@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.4] - 2026-10-03
+
+- Keep lyric font sizes consistent with and without the artwork panel when Now Playing opens or closes.
+- Preserve the artwork layout's font proportions while respecting Spotify zoom and sidebar resizing.
+
 ## [1.1.3] - 2026-10-03
 
 - Keep the cover hidden when switching from an open Now Playing view to Queue, and visible when Queue opens from a closed Now Playing view.
