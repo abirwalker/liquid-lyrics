@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.0] - 2026-10-02
+
+- Show album artwork, track title and artists beside the lyrics when Now Playing is hidden.
+- Hide the artwork panel when Now Playing is open or there is not enough room for readable lyrics.
+- Scale the artwork and lyric text with the view and Spotify's zoom controls.
+
 ## [1.0.0] - 2026-10-01
 
 First public release of Liquid Lyrics.

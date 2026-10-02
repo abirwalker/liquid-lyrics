@@ -116,6 +116,75 @@ button[data-testid="lyrics-button"],
   opacity: 1;
 }
 
+.ll-layout {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  z-index: 1;
+}
+
+.ll-lyric-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+.ll-with-track .ll-layout {
+  inset-inline: calc(var(--ll-view-width) * .11) calc(var(--ll-view-width) * .04);
+  grid-template-columns: var(--ll-artwork-column-width) minmax(0, 1fr);
+  gap: calc(var(--ll-view-width) * .10);
+  align-items: stretch;
+}
+
+.ll-track-panel {
+  align-self: center;
+  width: var(--ll-cover-size);
+  justify-self: center;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.ll-track-cover {
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ll-track-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ll-track-title,
+.ll-track-artist {
+  margin: 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ll-track-title {
+  margin-top: max(12px, 4.4cqw);
+  font-size: max(13px, 4.1cqw);
+  font-weight: 600;
+  line-height: 1.15;
+  -webkit-line-clamp: 3;
+}
+
+.ll-track-artist {
+  margin-top: 0;
+  color: rgb(255 255 255 / 80%);
+  font-size: max(9px, 2.65cqw);
+  font-weight: 400;
+  line-height: 1.3;
+  -webkit-line-clamp: 2;
+}
+
 /* Keep white lyrics legible over pale artwork without changing its palette. */
 #liquid-lyrics-overlay::after {
   content: "";
@@ -139,8 +208,19 @@ button[data-testid="lyrics-button"],
   mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
   --amll-lp-color: #fff;
   --amll-lp-hover-bg-color: rgb(255 255 255 / 6%);
-  --amll-lp-font-size: clamp(28px, 4.8cqw, 58px);
+  --amll-lp-font-size: clamp(28px, calc(4.8cqw * var(--ll-window-zoom, 1)), 58px);
   --lyric-line-padding-x: clamp(24px, 5cqw, 64px);
+}
+
+#liquid-lyrics-overlay.ll-with-track .ll-player {
+  inset: 0;
+  --amll-lp-font-size: var(--ll-artwork-lyric-size);
+  --lyric-line-padding-x: 5cqw;
+}
+
+.ll-with-track .ll-plain-lyrics {
+  padding: calc(var(--ll-view-height) * .06) 5cqw;
+  font-size: var(--ll-artwork-lyric-size);
 }
 
 .ll-player:focus-visible,
@@ -239,7 +319,7 @@ button[data-testid="lyrics-button"],
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 48px max(24px, calc((100% - 880px) / 2));
-  font-size: clamp(28px, 4.8cqw, 58px);
+  font-size: clamp(28px, calc(4.8cqw * var(--ll-window-zoom, 1)), 58px);
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: -.015em;

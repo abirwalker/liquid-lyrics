@@ -4,6 +4,7 @@ import './styles.css';
 import type { LyricsResult } from '../types/types';
 import { convertToAmllLines, type DisplayLyricLine } from './adapter';
 import { getSongwriters, isRecord } from '../types/types';
+import { TrackPanel } from './track-panel';
 
 const PROVIDER_CREDITS = new Map([
   ['binilyrics', 'BiniLyrics · Binimum'],
@@ -57,6 +58,7 @@ export class LyricsView {
   private statusEl: HTMLElement;
   private plainLyrics: HTMLElement;
   private player: DomLyricPlayer;
+  private trackPanel: TrackPanel;
   private background: MeshGradientRenderer | null = null;
   private artworkUrl = '';
   private artworkVersion = 0;
@@ -88,6 +90,13 @@ export class LyricsView {
     this.callbacks = callbacks;
     this.overlay = document.createElement('div');
     this.overlay.id = 'liquid-lyrics-overlay';
+    const layout = document.createElement('div');
+    layout.className = 'll-layout';
+    const lyricStage = document.createElement('div');
+    lyricStage.className = 'll-lyric-stage';
+    this.trackPanel = new TrackPanel(this.overlay);
+    layout.append(this.trackPanel.element, lyricStage);
+    this.overlay.append(layout);
 
     this.player = new CreditsLyricPlayer();
     this.applyMotionPreference();
@@ -98,7 +107,7 @@ export class LyricsView {
 
     const playerElement = this.player.getElement();
     playerElement.classList.add('ll-player');
-    this.overlay.appendChild(playerElement);
+    lyricStage.appendChild(playerElement);
     playerElement.tabIndex = 0;
     playerElement.setAttribute('role', 'region');
     playerElement.setAttribute('aria-label', 'Lyrics. Use Up and Down to seek between lines.');
@@ -124,13 +133,13 @@ export class LyricsView {
     this.plainLyrics.setAttribute('role', 'region');
     this.plainLyrics.setAttribute('aria-label', 'Lyrics without timing');
     this.plainLyrics.hidden = true;
-    this.overlay.appendChild(this.plainLyrics);
+    lyricStage.appendChild(this.plainLyrics);
 
     this.statusEl = document.createElement('div');
     this.statusEl.className = 'll-status-msg';
     this.statusEl.setAttribute('role', 'status');
     this.statusEl.textContent = 'Play a song to see its lyrics';
-    this.overlay.appendChild(this.statusEl);
+    lyricStage.appendChild(this.statusEl);
 
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && this.requestedOpen) this.callbacks.onClose();
@@ -269,10 +278,12 @@ export class LyricsView {
   }
 
   public updateTrack(track: unknown) {
+    this.trackPanel.updateTrack(track);
     const metadata = isRecord(track) && isRecord(track.metadata) ? track.metadata : {};
     const source = metadata.image_xlarge_url ?? metadata.image_large_url ?? metadata.image_url;
     const url = typeof source === 'string' ? source.replace(/^spotify:image:/, 'https://i.scdn.co/image/') : '';
     if (url === this.artworkUrl) return;
+    this.trackPanel.setArtwork(null);
     this.artworkUrl = url;
     this.artworkVersion++;
     if (!url && this.background) this.background.getElement().dataset.ready = 'false';
@@ -280,7 +291,7 @@ export class LyricsView {
   }
 
   private loadArtwork() {
-    if (!this.artworkUrl || !this.background) return;
+    if (!this.artworkUrl) return;
     if (this.artworkRequestVersion === this.artworkVersion) return;
     const version = this.artworkVersion;
     this.artworkRequestVersion = version;
@@ -289,6 +300,9 @@ export class LyricsView {
     image.crossOrigin = 'anonymous';
     image.src = this.artworkUrl;
     void image.decode().then(() => {
+      if (version !== this.artworkVersion) return;
+      this.trackPanel.setArtwork(image);
+      if (!background) return;
       // Serialize texture uploads so an old track cannot overwrite a newer one.
       this.artworkTask = this.artworkTask.then(async () => {
         if (version !== this.artworkVersion) return;
@@ -307,7 +321,7 @@ export class LyricsView {
     }).catch((error: unknown) => {
       if (version !== this.artworkVersion) return;
       this.artworkRequestVersion = -1;
-      background.getElement().dataset.ready = 'false';
+      if (background) background.getElement().dataset.ready = 'false';
       console.warn('[Liquid Lyrics] Artwork unavailable:', error);
     });
   }
@@ -351,6 +365,7 @@ export class LyricsView {
     this.savedScrollTop = pageRoot.scrollTop;
     this.hideHostContent();
     pageRoot.prepend(this.overlay);
+    this.trackPanel.mount();
     this.hostObserver.observe(pageRoot, { childList: true });
     pageRoot.scrollTop = 0;
 
@@ -405,6 +420,7 @@ export class LyricsView {
     this.isOpen = false;
 
     this.hostObserver.disconnect();
+    this.trackPanel.unmount();
     this.overlay.remove();
 
     for (const [el, display] of this.hiddenSiblings) {
