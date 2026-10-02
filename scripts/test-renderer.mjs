@@ -612,14 +612,14 @@ try {
   assert.equal(await artworkVisible(),false,'visible Now Playing hides artwork before Queue opens');
   await evaluate(`document.querySelector('[data-testid="control-button-queue"]').setAttribute('aria-pressed','true')`);
   await wait(100);
-  assert.equal(await artworkVisible(),true,'Queue active state wins while Spotify retains stale Now Playing label');
+  assert.equal(await artworkVisible(),false,'open NPV keeps artwork hidden while Queue retains stale NPV label');
   await evaluate(`document.getElementById('Desktop_PanelContainer_Id').setAttribute('aria-label','Queue')`);
   await wait(100);
-  assert.equal(await artworkVisible(),true,'Queue content arriving keeps artwork visible');
+  assert.equal(await artworkVisible(),false,'open NPV keeps artwork hidden after Queue content arrives');
   await evaluate(`document.querySelector('[data-testid="control-button-queue"]').remove()`);
   await wait(100);
-  assert.equal(await artworkVisible(),true,'older clients without Queue pressed state use panel label');
-  for (const [label, hidden, expected] of [['Now playing view','false',false], ['Queue','false',true], ['Now playing view','true',true], ['','false',false]]) {
+  assert.equal(await artworkVisible(),false,'Queue button removal preserves the prior open NPV state');
+  for (const [label, hidden, expected] of [['Now playing view','false',false], ['Queue','false',false], ['Now playing view','true',true], ['Queue','false',true], ['','false',false]]) {
     await evaluate(`document.getElementById('Desktop_PanelContainer_Id').setAttribute('aria-label', '${label}'); document.getElementById('artwork-sidebar').setAttribute('aria-hidden', '${hidden}')`);
     await wait(100);
     assert.equal(await artworkVisible(), expected, `${label || 'unknown'} sidebar: artwork visibility`);

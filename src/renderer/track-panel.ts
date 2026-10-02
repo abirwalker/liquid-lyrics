@@ -25,14 +25,15 @@ function getWindowZoom(): number {
   return Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
 }
 
-export function getNowPlayingState(): 'visible' | 'hidden' | 'unknown' {
+export function getNowPlayingState(previous: 'visible' | 'hidden' | 'unknown' = 'unknown'): 'visible' | 'hidden' | 'unknown' {
+  // Queue replaces the sidebar without exposing whether NPV was open underneath.
+  if (document.querySelector('[data-testid="control-button-queue"]')?.getAttribute('aria-pressed') === 'true') return previous;
   const panel = document.getElementById('Desktop_PanelContainer_Id');
   if (!panel || panel.closest('[aria-hidden="true"], [hidden]')) return 'hidden';
-  if (document.querySelector('[data-testid="control-button-queue"]')?.getAttribute('aria-pressed') === 'true') return 'hidden';
   const panelLabel = panel.getAttribute('aria-label')?.trim();
   const triggerLabel = document.querySelector('[data-testid="cover-art-button"]')?.getAttribute('aria-label')?.trim();
   if (!panelLabel || !triggerLabel) return 'unknown';
-  if (panelLabel !== triggerLabel) return 'hidden';
+  if (panelLabel !== triggerLabel) return previous;
   for (let element: HTMLElement | null = panel; element; element = element.parentElement) {
     const style = getComputedStyle(element);
     if (style.display === 'none' || style.visibility === 'hidden' ||
@@ -50,6 +51,7 @@ export class TrackPanel {
   private artist = document.createElement('p');
   private album = document.createElement('span');
   private mounted = false;
+  private nowPlayingState: 'visible' | 'hidden' | 'unknown' = 'unknown';
   private frame: number | null = null;
   private hasArtwork = false;
   private hasTitle = false;
@@ -121,6 +123,7 @@ export class TrackPanel {
   mount() {
     if (this.mounted) return;
     this.mounted = true;
+    this.nowPlayingState = 'unknown';
     this.resizeObserver.observe(this.overlay);
     this.observer.observe(document.body, { subtree: true, childList: true, attributes: true,
       attributeFilter: ['aria-label', 'aria-hidden', 'aria-pressed', 'hidden', 'class', 'style'] });
@@ -136,7 +139,9 @@ export class TrackPanel {
   }
 
   private schedule() {
-    if (!this.mounted || this.frame !== null) return;
+    if (!this.mounted) return;
+    this.nowPlayingState = getNowPlayingState(this.nowPlayingState);
+    if (this.frame !== null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
       const { width, height } = this.overlay.getBoundingClientRect();
@@ -145,7 +150,7 @@ export class TrackPanel {
       const lyricWidth = width * 0.75 - artworkColumn;
       // Reserve a readable lyric column and room below the square cover for metadata.
       const visible = this.hasArtwork && this.hasTitle && width >= 1120 && height >= 480 && lyricWidth >= 480 &&
-        getNowPlayingState() === 'hidden';
+        this.nowPlayingState === 'hidden';
       this.overlay.style.setProperty('--ll-window-zoom', `${zoom}`);
       this.overlay.style.setProperty('--ll-artwork-column-width', `${artworkColumn}px`);
       this.overlay.style.setProperty('--ll-view-height', `${height}px`);
