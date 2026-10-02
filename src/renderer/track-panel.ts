@@ -1,0 +1,127 @@
+import { isRecord } from '../types/types';
+
+function getWindowZoom(): number {
+  if (innerWidth <= 0 || innerHeight <= 0 || outerWidth <= 0 || outerHeight <= 0) return 1;
+  // Outer window dimensions stay in OS units during page zoom. The smaller ratio
+  // avoids treating a docked DevTools pane on one axis as additional zoom.
+  const zoom = Math.min(outerWidth / innerWidth, outerHeight / innerHeight);
+  return Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+}
+
+export function getNowPlayingState(): 'visible' | 'hidden' | 'unknown' {
+  const panel = document.getElementById('Desktop_PanelContainer_Id');
+  if (!panel || panel.closest('[aria-hidden="true"], [hidden]')) return 'hidden';
+  const panelLabel = panel.getAttribute('aria-label')?.trim();
+  const triggerLabel = document.querySelector('[data-testid="cover-art-button"]')?.getAttribute('aria-label')?.trim();
+  if (!panelLabel || !triggerLabel) return 'unknown';
+  if (panelLabel !== triggerLabel) return 'hidden';
+  for (let element: HTMLElement | null = panel; element; element = element.parentElement) {
+    const style = getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden' ||
+        style.visibility === 'collapse' || Number(style.opacity) === 0) return 'hidden';
+  }
+  const rect = panel.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.bottom > 0 &&
+    rect.left < innerWidth && rect.top < innerHeight ? 'visible' : 'hidden';
+}
+
+export class TrackPanel {
+  readonly element = document.createElement('section');
+  private cover = document.createElement('div');
+  private title = document.createElement('p');
+  private artist = document.createElement('p');
+  private mounted = false;
+  private frame: number | null = null;
+  private hasArtwork = false;
+  private hasTitle = false;
+  private overlay: HTMLElement;
+  private resizeObserver = new ResizeObserver(() => this.schedule());
+  private observer = new MutationObserver(records => {
+    const panel = document.getElementById('Desktop_PanelContainer_Id');
+    const trigger = document.querySelector('[data-testid="cover-art-button"]');
+    const selector = '#Desktop_PanelContainer_Id, [data-testid="cover-art-button"]';
+    if (records.some(record => {
+      if (this.overlay.contains(record.target)) return false;
+      if (record.type === 'attributes') return record.target instanceof Element &&
+        ((panel !== null && record.target.contains(panel)) || (trigger !== null && record.target.contains(trigger)));
+      return [...record.addedNodes, ...record.removedNodes].some(node =>
+        node instanceof Element && (node.matches(selector) || node.querySelector(selector)));
+    })) this.schedule();
+  });
+
+  constructor(overlay: HTMLElement) {
+    this.overlay = overlay;
+    this.element.className = 'll-track-panel';
+    this.element.setAttribute('aria-label', 'Current track');
+    this.element.hidden = true;
+    this.cover.className = 'll-track-cover';
+    this.title.className = 'll-track-title';
+    this.artist.className = 'll-track-artist';
+    this.element.append(this.cover, this.title, this.artist);
+  }
+
+  updateTrack(track: unknown) {
+    const item = isRecord(track) ? track : {};
+    const metadata = isRecord(item.metadata) ? item.metadata : {};
+    const title = typeof item.name === 'string' ? item.name : metadata.title;
+    this.title.textContent = typeof title === 'string' ? title.trim() : '';
+    const artists = Array.isArray(item.artists) ? item.artists.flatMap(artist =>
+      isRecord(artist) && typeof artist.name === 'string' && artist.name.trim() ? [artist.name.trim()] : []) : [];
+    this.artist.textContent = artists.length ? artists.join(', ') :
+      typeof metadata.artist_name === 'string' ? metadata.artist_name.trim() : '';
+    this.title.title = this.title.textContent;
+    this.artist.title = this.artist.textContent;
+    this.artist.hidden = !this.artist.textContent;
+    this.hasTitle = !!this.title.textContent;
+    this.schedule();
+  }
+
+  setArtwork(image: HTMLImageElement | null) {
+    if (image) {
+      image.alt = '';
+      this.cover.replaceChildren(image);
+    } else this.cover.replaceChildren();
+    this.hasArtwork = !!image;
+    this.schedule();
+  }
+
+  mount() {
+    if (this.mounted) return;
+    this.mounted = true;
+    this.resizeObserver.observe(this.overlay);
+    this.observer.observe(document.body, { subtree: true, childList: true, attributes: true,
+      attributeFilter: ['aria-label', 'aria-hidden', 'hidden', 'class', 'style'] });
+    this.schedule();
+  }
+
+  unmount() {
+    this.mounted = false;
+    this.resizeObserver.disconnect();
+    this.observer.disconnect();
+    if (this.frame !== null) cancelAnimationFrame(this.frame);
+    this.frame = null;
+  }
+
+  private schedule() {
+    if (!this.mounted || this.frame !== null) return;
+    this.frame = requestAnimationFrame(() => {
+      this.frame = null;
+      const { width, height } = this.overlay.getBoundingClientRect();
+      const zoom = getWindowZoom();
+      const artworkColumn = width * 0.28 * zoom;
+      const lyricWidth = width * 0.75 - artworkColumn;
+      // Reserve a readable lyric column and room below the square cover for metadata.
+      const visible = this.hasArtwork && this.hasTitle && width >= 1120 && height >= 480 && lyricWidth >= 480 &&
+        getNowPlayingState() === 'hidden';
+      this.overlay.style.setProperty('--ll-window-zoom', `${zoom}`);
+      this.overlay.style.setProperty('--ll-artwork-column-width', `${artworkColumn}px`);
+      this.overlay.style.setProperty('--ll-view-height', `${height}px`);
+      const coverSize = Math.min(artworkColumn, height * 0.45 * zoom);
+      this.overlay.style.setProperty('--ll-view-width', `${width}px`);
+      this.overlay.style.setProperty('--ll-cover-size', `${Math.max(0, coverSize)}px`);
+      this.overlay.style.setProperty('--ll-artwork-lyric-size', `${Math.max(28, coverSize * 0.115)}px`);
+      this.overlay.classList.toggle('ll-with-track', visible);
+      this.element.hidden = !visible;
+    });
+  }
+}

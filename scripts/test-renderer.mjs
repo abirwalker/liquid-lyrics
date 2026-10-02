@@ -57,7 +57,13 @@ function send(method, params = {}, sessionId) {
 }
 const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
 const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
-const command = (method, params) => send(method, params, sessionId);
+const { windowId } = await send('Browser.getWindowForTarget', { targetId });
+const command = async (method, params) => {
+  if (method === 'Emulation.setDeviceMetricsOverride') {
+    await send('Browser.setWindowBounds', { windowId, bounds: { width: params.width, height: params.height } });
+  }
+  return send(method, params, sessionId);
+};
 const evaluate = async expression => {
   const result = await command('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
   if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
@@ -483,6 +489,141 @@ try {
   await wait(1500);
   const interludeScroll = await endLayout();
   assert.ok(Math.abs(interludeScroll.bottom - interludeScroll.height * .7) < 2, 'interior dots preserve the manual end limit');
+  await evaluate(`(() => {
+    const sidebar = document.createElement('div'); sidebar.id = 'artwork-sidebar';
+    sidebar.setAttribute('aria-hidden', 'true'); sidebar.style.cssText = 'position:fixed;right:8px;top:40px;width:420px;height:600px;overflow:hidden';
+    const panel = document.createElement('aside'); panel.id = 'Desktop_PanelContainer_Id';
+    panel.setAttribute('aria-label', 'Now playing view'); panel.style.cssText = 'width:420px;height:600px';
+    sidebar.append(panel); document.body.append(sidebar);
+    const trigger = document.createElement('button'); trigger.dataset.testid = 'cover-art-button';
+    trigger.setAttribute('aria-label', 'Now playing view'); trigger.hidden = true; document.body.append(trigger);
+    fixture.artwork();
+    window.artworkTestUrl = fixture.view.artworkUrl;
+    fixture.view.updateTrack({ name: 'Artwork test track', artists: [{name:'Artist one'}, {name:'Artist two'}], metadata: {image_url:artworkTestUrl} });
+  })()`);
+  const artworkVisible = () => evaluate("!document.querySelector('.ll-track-panel').hidden");
+  let previousArtworkSize = null;
+  for (const [width, height] of [[400,800], [1119,800], [1120,800], [1500,800], [2200,800],
+    [1438,882], [2116,1242], [3398,1962]]) {
+    await command('Emulation.setDeviceMetricsOverride', { width: width + 48, height: height + 64, deviceScaleFactor: 1, mobile: false });
+    await evaluate(`fixture.resize(${height})`);
+    for (const timing of ['line', 'word', 'none']) {
+      await evaluate(`fixture.setProgress(12500); fixture.view.setLyrics(fixture.fixture('${timing}'))`);
+      await wait(300);
+      assert.equal(await artworkVisible(), width >= 1120, `${width}px ${timing}: artwork only with enough lyric space`);
+      if (width >= 1120) {
+        const layout = await evaluate(`(() => {
+          const cover = document.querySelector('.ll-track-panel').getBoundingClientRect();
+          const stage = document.querySelector('.ll-lyric-stage').getBoundingClientRect();
+          return { separated:cover.right < stage.left, lyricWidth:stage.width };
+        })()`);
+        assert.ok(layout.separated && layout.lyricWidth >= 480, 'artwork leaves a separate readable lyric column');
+        const bounds = await evaluate(`(() => {
+          const plain = document.querySelector('.ll-plain-lyrics');
+          const elements = plain.hidden ? document.querySelectorAll('.FmKaba_lyricMainLine') : plain.querySelectorAll('p');
+          const stage = document.querySelector('.ll-lyric-stage').getBoundingClientRect();
+          return [...elements].every(element => {
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) {
+              const range = document.createRange(); range.selectNodeContents(walker.currentNode);
+              if ([...range.getClientRects()].some(rect => rect.width &&
+                  (rect.left < stage.left - 1 || rect.right > stage.right + 1))) return false;
+            }
+            return true;
+          });
+        })()`);
+        assert.equal(bounds, true, `${width}px ${timing}: lyric text stays within the reading column`);
+      }
+    }
+    if (height > 800) {
+      const size = await evaluate(`({cover:document.querySelector('.ll-track-cover').getBoundingClientRect().width,
+        font:parseFloat(getComputedStyle(document.querySelector('.ll-plain-lyrics')).fontSize)})`);
+      if (previousArtworkSize) {
+        assert.ok(size.cover > previousArtworkSize.cover && size.font > previousArtworkSize.font,
+          'larger views grow both cover and lyric text');
+        assert.ok(Math.abs(size.font / size.cover - previousArtworkSize.font / previousArtworkSize.cover) < .01,
+          'text-to-cover proportion stays consistent across resolutions');
+      }
+      previousArtworkSize = size;
+    }
+  }
+  // Use real page zoom here: a DPR-only viewport override cannot catch zoom cancellation.
+  await command('Emulation.clearDeviceMetricsOverride');
+  await send('Browser.setWindowBounds', { windowId, bounds: { width: 2560, height: 1440 } });
+  const { targetId: settingsTarget } = await send('Target.createTarget', { url: 'chrome://settings' });
+  const { sessionId: settingsSession } = await send('Target.attachToTarget', { targetId: settingsTarget, flatten: true });
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const api = await send('Runtime.evaluate', { expression: 'typeof chrome.settingsPrivate?.setDefaultZoom', returnByValue: true }, settingsSession);
+    if (api.result.value === 'function') break;
+    await wait(100);
+  }
+  const zoomSizes = new Map();
+  for (const zoom of [1, 1.2, .8, 1]) {
+    const changed = await send('Runtime.evaluate', { expression:
+      `new Promise(resolve => chrome.settingsPrivate.setDefaultZoom(${zoom}, resolve))`,
+      returnByValue: true, awaitPromise: true }, settingsSession);
+    assert.equal(changed.result.value, true, 'isolated browser zoom setting accepted');
+    await command('Page.bringToFront');
+    await evaluate('fixture.resize(innerHeight - 64)');
+    for (const timing of ['line', 'word', 'none']) {
+      await evaluate(`fixture.view.setLyrics(fixture.fixture('${timing}'))`);
+      await wait(300);
+      const size = await evaluate(`(() => {
+        const panel = document.querySelector('.ll-track-panel');
+        const stage = document.querySelector('.ll-lyric-stage').getBoundingClientRect();
+        const plain = document.querySelector('.ll-plain-lyrics');
+        const elements = plain.hidden ? document.querySelectorAll('.FmKaba_lyricMainLine') : plain.querySelectorAll('p');
+        const fits = [...elements].every(element => {
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode()) {
+            const range = document.createRange(); range.selectNodeContents(walker.currentNode);
+            if ([...range.getClientRects()].some(rect => rect.width &&
+                (rect.left < stage.left - 1 || rect.right > stage.right + 1))) return false;
+          }
+          return true;
+        });
+        return {visible:!panel.hidden, fits, dpr:devicePixelRatio,
+          cover:document.querySelector('.ll-track-cover').getBoundingClientRect().width * devicePixelRatio,
+          font:parseFloat(getComputedStyle(plain).fontSize) * devicePixelRatio};
+      })()`);
+      assert.ok(Math.abs(size.dpr - zoom) < .01, 'native browser zoom is active');
+      assert.ok(size.visible && size.fits, `${zoom}x ${timing}: zoom leaves artwork and lyrics readable`);
+      if (zoomSizes.has(timing)) {
+        const baseline = zoomSizes.get(timing);
+        if (zoom > 1) assert.ok(size.cover > baseline.cover * 1.1 && size.font > baseline.font * 1.1,
+          'zoom in enlarges both cover and font');
+        if (zoom < 1) assert.ok(size.cover < baseline.cover * .9 && size.font < baseline.font * .9,
+          'zoom out reduces both cover and font');
+        if (zoom === 1) assert.ok(Math.abs(size.cover - baseline.cover) < 1 && Math.abs(size.font - baseline.font) < 1,
+          'reset zoom restores the original sizes without remount');
+      } else zoomSizes.set(timing, size);
+    }
+  }
+  await send('Target.closeTarget', { targetId: settingsTarget });
+  await evaluate('fixture.resize(800)');
+  await command('Emulation.setDeviceMetricsOverride', { width: 1548, height: 964, deviceScaleFactor: 1, mobile: false });
+  for (const [label, hidden, expected] of [['Now playing view','false',false], ['Queue','false',true], ['Now playing view','true',true], ['','false',false]]) {
+    await evaluate(`document.getElementById('Desktop_PanelContainer_Id').setAttribute('aria-label', '${label}'); document.getElementById('artwork-sidebar').setAttribute('aria-hidden', '${hidden}')`);
+    await wait(100);
+    assert.equal(await artworkVisible(), expected, `${label || 'unknown'} sidebar: artwork visibility`);
+  }
+  await evaluate(`document.getElementById('artwork-sidebar').setAttribute('aria-hidden','true');
+    fixture.view.updateTrack({name:'Second track, same cover', artists:[{name:'New artist'}], metadata:{image_url:artworkTestUrl}})`);
+  await wait(100);
+  assert.equal(await evaluate("document.querySelector('.ll-track-title').textContent"), 'Second track, same cover');
+  assert.equal(await evaluate("document.querySelector('.ll-track-artist').textContent"), 'New artist');
+  assert.equal(await evaluate("document.querySelectorAll('.ll-track-cover img').length"), 1, 'reuse decoded cover on same-album track change');
+  await evaluate(`fixture.view.updateTrack({name:'LongTitleWithoutSpaces'.repeat(20), artists:[{name:'LongArtistWithoutSpaces'.repeat(15)}], metadata:{image_url:artworkTestUrl}})`);
+  await wait(100);
+  assert.equal(await evaluate("[...document.querySelectorAll('.ll-track-title,.ll-track-artist')].every(el=>el.scrollWidth <= el.clientWidth + 1)"), true, 'metadata stays within its column');
+  await evaluate('fixture.resize(470)'); await wait(100);
+  assert.equal(await artworkVisible(), false, 'short view hides artwork');
+  await evaluate('fixture.resize(800); fixture.view.unmount(); fixture.view.mount()'); await wait(200);
+  assert.equal(await artworkVisible(), true, 'observers reconnect after reopening');
+  await evaluate(`fixture.view.updateTrack({name:'Missing cover',metadata:{}})`); await wait(100);
+  assert.equal(await artworkVisible(), false, 'missing cover restores lyrics-only layout');
+  assert.equal(await evaluate("document.querySelectorAll('.ll-track-cover img').length"), 0, 'old cover removed');
+  await evaluate("document.getElementById('artwork-sidebar').remove(); document.querySelector('[data-testid=cover-art-button]').remove()");
   await command('Emulation.setDeviceMetricsOverride', { width: 1148, height: 964, deviceScaleFactor: 1, mobile: false });
   await evaluate('fixture.resize(800)');
   for (const mode of ['?modern', '?legacy', '?detached']) {
@@ -569,7 +710,7 @@ try {
         `${report.width}px ${report.timing}: text clipped: ${line.text}`);
     }
   }
-  console.log('Browser checks passed: 4 widths, 2 heights, line/word wrapping, duet bounds, mouse/keyboard seeking, plain/empty/instrumental states, mount cancellation, reduced motion, Playbar/Topbar, route state, Escape, safe writer credits, provider attribution, late credits and track switches.');
+  console.log('Browser checks passed: lyric wrapping, backing vocals, seeking, credit scroll/blur, artwork sizing and NPV/Queue switching, same-cover metadata, long metadata, missing artwork, remount, reduced motion, Playbar/Topbar, route state, Escape and writer credits.');
 } finally {
   await send('Browser.close').catch(() => {});
   socket.close();
