@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.1.2] - 2026-10-03
+
+- Keep the artwork panel visible while Queue opens, avoiding a brief jump in the lyric layout.
+
 ## [1.1.1] - 2026-10-03
 
 - Link the track title, artists and album name to their Spotify pages.

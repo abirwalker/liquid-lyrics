@@ -602,6 +602,23 @@ try {
   await send('Target.closeTarget', { targetId: settingsTarget });
   await evaluate('fixture.resize(800)');
   await command('Emulation.setDeviceMetricsOverride', { width: 1548, height: 964, deviceScaleFactor: 1, mobile: false });
+  await evaluate(`(() => {
+    const queue = document.createElement('button'); queue.dataset.testid = 'control-button-queue';
+    queue.hidden = true; queue.setAttribute('aria-pressed','false'); document.body.append(queue);
+    document.getElementById('Desktop_PanelContainer_Id').setAttribute('aria-label','Now playing view');
+    document.getElementById('artwork-sidebar').setAttribute('aria-hidden','false');
+  })()`);
+  await wait(100);
+  assert.equal(await artworkVisible(),false,'visible Now Playing hides artwork before Queue opens');
+  await evaluate(`document.querySelector('[data-testid="control-button-queue"]').setAttribute('aria-pressed','true')`);
+  await wait(100);
+  assert.equal(await artworkVisible(),true,'Queue active state wins while Spotify retains stale Now Playing label');
+  await evaluate(`document.getElementById('Desktop_PanelContainer_Id').setAttribute('aria-label','Queue')`);
+  await wait(100);
+  assert.equal(await artworkVisible(),true,'Queue content arriving keeps artwork visible');
+  await evaluate(`document.querySelector('[data-testid="control-button-queue"]').remove()`);
+  await wait(100);
+  assert.equal(await artworkVisible(),true,'older clients without Queue pressed state use panel label');
   for (const [label, hidden, expected] of [['Now playing view','false',false], ['Queue','false',true], ['Now playing view','true',true], ['','false',false]]) {
     await evaluate(`document.getElementById('Desktop_PanelContainer_Id').setAttribute('aria-label', '${label}'); document.getElementById('artwork-sidebar').setAttribute('aria-hidden', '${hidden}')`);
     await wait(100);

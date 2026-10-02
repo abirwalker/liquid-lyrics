@@ -28,6 +28,7 @@ function getWindowZoom(): number {
 export function getNowPlayingState(): 'visible' | 'hidden' | 'unknown' {
   const panel = document.getElementById('Desktop_PanelContainer_Id');
   if (!panel || panel.closest('[aria-hidden="true"], [hidden]')) return 'hidden';
+  if (document.querySelector('[data-testid="control-button-queue"]')?.getAttribute('aria-pressed') === 'true') return 'hidden';
   const panelLabel = panel.getAttribute('aria-label')?.trim();
   const triggerLabel = document.querySelector('[data-testid="cover-art-button"]')?.getAttribute('aria-label')?.trim();
   if (!panelLabel || !triggerLabel) return 'unknown';
@@ -57,11 +58,13 @@ export class TrackPanel {
   private observer = new MutationObserver(records => {
     const panel = document.getElementById('Desktop_PanelContainer_Id');
     const trigger = document.querySelector('[data-testid="cover-art-button"]');
-    const selector = '#Desktop_PanelContainer_Id, [data-testid="cover-art-button"]';
+    const queue = document.querySelector('[data-testid="control-button-queue"]');
+    const selector = '#Desktop_PanelContainer_Id, [data-testid="cover-art-button"], [data-testid="control-button-queue"]';
     if (records.some(record => {
       if (this.overlay.contains(record.target)) return false;
       if (record.type === 'attributes') return record.target instanceof Element &&
-        ((panel !== null && record.target.contains(panel)) || (trigger !== null && record.target.contains(trigger)));
+        ((panel !== null && record.target.contains(panel)) || (trigger !== null && record.target.contains(trigger)) ||
+          (queue !== null && record.target.contains(queue)));
       return [...record.addedNodes, ...record.removedNodes].some(node =>
         node instanceof Element && (node.matches(selector) || node.querySelector(selector)));
     })) this.schedule();
@@ -120,7 +123,7 @@ export class TrackPanel {
     this.mounted = true;
     this.resizeObserver.observe(this.overlay);
     this.observer.observe(document.body, { subtree: true, childList: true, attributes: true,
-      attributeFilter: ['aria-label', 'aria-hidden', 'hidden', 'class', 'style'] });
+      attributeFilter: ['aria-label', 'aria-hidden', 'aria-pressed', 'hidden', 'class', 'style'] });
     this.schedule();
   }
 
