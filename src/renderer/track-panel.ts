@@ -1,5 +1,22 @@
 import { isRecord } from '../types/types';
 
+function trackLink(name: string, uri: unknown, type: 'track' | 'artist' | 'album'): Node {
+  const match = typeof uri === 'string' ? /^spotify:(track|artist|album):([A-Za-z0-9]{22})$/.exec(uri) : null;
+  if (!match || match[1] !== type || !name) return document.createTextNode(name);
+  const path = `/${type}/${match[2]}`;
+  const link = document.createElement('a');
+  link.href = `https://open.spotify.com${path}`;
+  link.textContent = name;
+  link.addEventListener('click', event => {
+    const history = globalThis.Spicetify?.Platform?.History;
+    if (!history || event.defaultPrevented || event.button !== 0 ||
+        event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    history.push(path);
+  });
+  return link;
+}
+
 function getWindowZoom(): number {
   if (innerWidth <= 0 || innerHeight <= 0 || outerWidth <= 0 || outerHeight <= 0) return 1;
   // Outer window dimensions stay in OS units during page zoom. The smaller ratio
@@ -30,6 +47,7 @@ export class TrackPanel {
   private cover = document.createElement('div');
   private title = document.createElement('p');
   private artist = document.createElement('p');
+  private album = document.createElement('span');
   private mounted = false;
   private frame: number | null = null;
   private hasArtwork = false;
@@ -57,6 +75,8 @@ export class TrackPanel {
     this.cover.className = 'll-track-cover';
     this.title.className = 'll-track-title';
     this.artist.className = 'll-track-artist';
+    this.album.className = 'll-track-album';
+    this.album.hidden = true;
     this.element.append(this.cover, this.title, this.artist);
   }
 
@@ -64,13 +84,23 @@ export class TrackPanel {
     const item = isRecord(track) ? track : {};
     const metadata = isRecord(item.metadata) ? item.metadata : {};
     const title = typeof item.name === 'string' ? item.name : metadata.title;
-    this.title.textContent = typeof title === 'string' ? title.trim() : '';
+    this.title.replaceChildren(trackLink(typeof title === 'string' ? title.trim() : '', item.uri, 'track'));
     const artists = Array.isArray(item.artists) ? item.artists.flatMap(artist =>
-      isRecord(artist) && typeof artist.name === 'string' && artist.name.trim() ? [artist.name.trim()] : []) : [];
-    this.artist.textContent = artists.length ? artists.join(', ') :
-      typeof metadata.artist_name === 'string' ? metadata.artist_name.trim() : '';
-    this.title.title = this.title.textContent;
-    this.artist.title = this.artist.textContent;
+      isRecord(artist) && typeof artist.name === 'string' && artist.name.trim() ?
+        [{ name: artist.name.trim(), uri: artist.uri }] : []) : [];
+    this.artist.replaceChildren();
+    if (artists.length) artists.forEach((artist, index) => {
+      if (index) this.artist.append(', ');
+      this.artist.append(trackLink(artist.name, artist.uri, 'artist'));
+    });
+    else this.artist.textContent = typeof metadata.artist_name === 'string' ? metadata.artist_name.trim() : '';
+    const album = isRecord(item.album) ? item.album : {};
+    const albumName = typeof album.name === 'string' ? album.name.trim() : '';
+    const metadataAlbum = typeof metadata.album_title === 'string' ? metadata.album_title.trim() : '';
+    this.album.replaceChildren(trackLink(albumName || metadataAlbum, album.uri ?? metadata.album_uri, 'album'));
+    this.album.hidden = !this.album.textContent;
+    if (this.artist.textContent && this.album.textContent) this.artist.append(' — ');
+    this.artist.append(this.album);
     this.artist.hidden = !this.artist.textContent;
     this.hasTitle = !!this.title.textContent;
     this.schedule();

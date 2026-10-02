@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.1.1] - 2026-10-03
+
+- Link the track title, artists and album name to their Spotify pages.
+
 ## [1.1.0] - 2026-10-02
 
 - Show album artwork, track title and artists beside the lyrics when Now Playing is hidden.

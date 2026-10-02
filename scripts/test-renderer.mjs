@@ -701,6 +701,44 @@ try {
   await evaluate(`appFixture.changeTrack('${thirdId}', 'With writers')`);
   await until(`document.querySelector('.ll-credits-writers')?.textContent === 'Provider Writer'`);
   assert.equal(await evaluate(`appFixture.creditRequests.size`), 2, 'existing writer metadata skips native requests');
+  await command('Emulation.setDeviceMetricsOverride', { width: 1600, height: 964, deviceScaleFactor: 1, mobile: false });
+  const linkedId = '4'.repeat(22), artistId = '5'.repeat(22), secondArtistId = '6'.repeat(22), albumId = '7'.repeat(22);
+  await evaluate(`(() => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 10;
+    appFixture.changeTrack('${linkedId}', 'With writers', {metadata:{image_url:canvas.toDataURL()},
+      album:{name:'Album fixture',uri:'spotify:album:${albumId}'},
+      artists:[{name:'First artist',uri:'spotify:artist:${artistId}'},{name:'Second artist',uri:'spotify:artist:${secondArtistId}'}]});
+  })()`);
+  await until(`document.querySelector('.ll-track-panel')?.hidden === false`);
+  assert.equal(await evaluate(`document.querySelector('.ll-track-artist').textContent`), 'First artist, Second artist — Album fixture');
+  assert.equal(await evaluate(`document.querySelector('.ll-track-album').textContent`), 'Album fixture');
+  assert.equal(await evaluate(`document.querySelector('.ll-track-panel [title]')`), null, 'metadata does not repeat in native tooltips');
+  await evaluate(`document.querySelector('.ll-track-title a').click()`);
+  assert.equal(await evaluate('appFixture.history.location.pathname'), `/track/${linkedId}`, 'title navigates to the track');
+  assert.equal(await evaluate(`!!document.querySelector('#liquid-lyrics-overlay')`), false, 'navigation unmounts the lyric overlay');
+  assert.equal(await evaluate(`document.querySelector('#original').style.display`), 'flex', 'track navigation restores the host');
+  for (const [index, artist] of [artistId, secondArtistId].entries()) {
+    await evaluate(`appFixture.history.push('/liquid-lyrics')`);
+    await until(`document.querySelector('.ll-track-panel')?.hidden === false`);
+    await evaluate(`document.querySelectorAll('.ll-track-artist a')[${index}].focus()`);
+    await command('Input.dispatchKeyEvent', {type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+    await command('Input.dispatchKeyEvent', {type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+    assert.equal(await evaluate('appFixture.history.location.pathname'), `/artist/${artist}`, 'Enter opens the individual artist profile');
+    assert.equal(await evaluate(`!!document.querySelector('#liquid-lyrics-overlay')`), false, 'artist navigation unmounts the lyric overlay');
+  }
+  await evaluate(`appFixture.history.push('/liquid-lyrics')`);
+  await until(`document.querySelector('.ll-track-panel')?.hidden === false`);
+  await evaluate(`document.querySelector('.ll-track-album a').click()`);
+  assert.equal(await evaluate('appFixture.history.location.pathname'), `/album/${albumId}`, 'album navigates to its page');
+  assert.equal(await evaluate(`!!document.querySelector('#liquid-lyrics-overlay')`), false, 'album navigation unmounts the lyric overlay');
+  await evaluate(`appFixture.history.push('/liquid-lyrics'); appFixture.changeTrack('${'8'.repeat(22)}','With writers',
+    {metadata:{album_title:'Metadata album',album_uri:'spotify:album:${albumId}'}})`);
+  assert.equal(await evaluate(`document.querySelector('.ll-track-album a').getAttribute('href')`), `https://open.spotify.com/album/${albumId}`, 'metadata album fallback links correctly');
+  await evaluate(`appFixture.changeTrack('${'9'.repeat(22)}','With writers',{album:{name:'Unlinked album',uri:'javascript:alert(1)'}})`);
+  assert.equal(await evaluate(`document.querySelector('.ll-track-album').textContent`), 'Unlinked album');
+  assert.equal(await evaluate(`document.querySelector('.ll-track-album a')`), null, 'invalid album URI stays plain text');
+  await evaluate(`appFixture.changeTrack('${'a'.repeat(22)}','With writers')`);
+  assert.equal(await evaluate(`document.querySelector('.ll-track-album').hidden`), true, 'missing album clears and hides stale metadata');
   await writeFile(resolve(out, 'report.json'), JSON.stringify({ reports, errors }, null, 2));
   assert.equal(errors.length, 0, 'no runtime exceptions');
   for (const report of reports) {
