@@ -8,11 +8,12 @@ import { fromLRC, fromPlain, fromTTML } from '../src/lyrics/formats';
 import { isValidResult as validLyrics } from '../src/types/types';
 import type { LyricsResult as Lyrics, LyricsProvider } from '../src/types/types';
 import { fetchLyricsChain, createDefaultChain, fetchLyrics } from '../src/lyrics/chain';
-import { LyricsCache, getCacheKeys, normalizeString } from '../src/storage/cache';
+import { LyricsCache, MemoryCache, IndexedDbStorage, getCacheKeys, normalizeString } from '../src/storage/cache';
 import { extractQuery } from '../src/player/listener';
 import { cleanTitle } from '../src/lyrics/cleaner';
 import { runBudgetChecks } from './request-budget';
 import { runCreditChecks } from './credits';
+import wakeCatalog from './wake-me-up-catalog.json';
 
 export function runIpadChecks(bini: unknown, lrc: unknown) {
   const biniResult = fromTTML('fixture', bini);
@@ -136,6 +137,27 @@ export async function runBoundaryChecks() {
   check(await fetchLyricsChain(query, [{ id: 'wrong', fetch: async () => good }]) === null, 'Incorrect provenance rejected');
   check(createDefaultChain().map(provider => provider.id).join(',') === 'binilyrics,lyricsplus,spotify,amll,lrclib',
     'Word-first providers precede line-timed fallbacks');
+  const wakeQuery = { song: 'Wake Me Up', artist: 'Avicii', album: 'True', durationMs: 247000 };
+  const wakeSelected = selectBiniItems(wakeCatalog.results, wakeQuery);
+  check(!wakeSelected.some(item => item.track_name?.includes('Titanium')),
+    'Live Bini catalog cannot supply a Titanium medley for Wake Me Up');
+  check(!wakeSelected.some(item => /\b(?:mixed|dj mix)\b/i.test(`${item.track_name} ${item.album_name}`)),
+    'A studio track rejects DJ-mix entries even when title, artist and duration overlap');
+  check(selectBiniItems(wakeCatalog.results, { ...wakeQuery, durationMs: 269000 })[0]?.track_name === 'Wake Me Up',
+    'A matching standalone catalog recording remains available');
+  const medley = wakeCatalog.results.find(item => item.isrc === 'US23A9036031')!;
+  check(selectBiniItems([medley], { song: medley.track_name, artist: medley.artist_name,
+    album: medley.album_name, durationMs: 248000 }).length === 1,
+    'An explicitly requested DJ medley remains supported');
+  check(selectBiniItems([{ track_name: 'Test', artist_name: 'Artist', album_name: 'DJ Mix',
+    duration: 200, lyricsUrl: 'https://example.com/a.ttml' }], { song: 'Test', artist: 'Artist', durationMs: 200000 }).length === 0,
+    'DJ album metadata rejects a mix even without a Mixed title suffix');
+  check(selectBiniItems([{ track_name: 'Mixed Feelings', artist_name: 'Artist', duration: 200,
+    lyricsUrl: 'https://example.com/a.ttml' }], { song: 'Mixed Feelings', artist: 'Artist', durationMs: 200000 }).length === 1,
+    'Mixed in an ordinary song title is not treated as a DJ version');
+  check(selectBiniItems([{ track_name: 'Mixed Feelings (Mixed)', artist_name: 'Artist', duration: 200,
+    lyricsUrl: 'https://example.com/a.ttml' }], { song: 'Mixed Feelings', artist: 'Artist', durationMs: 200000 }).length === 0,
+    'An ordinary title containing Mixed does not authorize a Mixed recording');
   check(scoreCandidate(query, { titles: ['Test'], artists: ['Artist'] }) !== null, 'Matching title and artist accepted');
   check(scoreCandidate(query, { titles: ['Test (Live)'], artists: ['Artist'] }) === null, 'Unexpected live version rejected');
   check(scoreCandidate({ ...query, durationMs: 200000 },
@@ -219,6 +241,60 @@ export async function runBoundaryChecks() {
   };
   const spotifyApi = { Platform: { RequestBuilder: { build: () => spotifyRequest } } };
   try {
+    const medleyCalls: URL[] = [];
+    globalThis.fetch = async input => {
+      const url = new URL(String(input));
+      medleyCalls.push(url);
+      if (url.hostname === 'lyrics-api.binimum.org') return Response.json(wakeCatalog);
+      if (url.hostname === 'lyricsplus.binimum.org') return Response.json({ ...lyricsPlusFixture,
+        metadata: { title: 'Wake Me Up', artist: 'Avicii', totalDuration: '4:07' } });
+      throw new Error('Rejected Bini mixes must not download their lyric files');
+    };
+    check((await fetchLyrics({ ...wakeQuery, skipCache: true }, undefined, new LyricsCache()))?.source === 'lyricsplus' &&
+      medleyCalls.length === 2 && medleyCalls[0].hostname === 'lyrics-api.binimum.org' &&
+      medleyCalls[1].hostname === 'lyricsplus.binimum.org',
+    'Rejecting the saved Titanium medleys reaches LyricsPlus without downloading the wrong file');
+    const biniStaleCache = new LyricsCache();
+    await biniStaleCache.set(wakeQuery, {
+      source: 'binilyrics',
+      instrumental: false,
+      lines: [{ text: 'Wrong Titanium medley words', timing: 'line', startMs: 1000, endMs: 2000, segments: [{ text: 'Wrong Titanium medley words', startMs: null, endMs: null, role: null }], agent: null }],
+    });
+    const legacyMemory = (biniStaleCache as unknown as { memory: MemoryCache }).memory;
+    const legacyEntry = legacyMemory.get('v4:meta:avicii:wake me up')!;
+    delete legacyEntry.biniMatchPolicy;
+    const persistentCache = new IndexedDbStorage();
+    await persistentCache.set(legacyEntry);
+    check(!(await new LyricsCache().get(wakeQuery)).hit,
+      'Persistent Bini results cached under the old matching policy are refreshed');
+    const evictedCalls: URL[] = [];
+    globalThis.fetch = async input => {
+      const url = new URL(String(input));
+      evictedCalls.push(url);
+      if (url.hostname === 'lyrics-api.binimum.org') return Response.json(wakeCatalog);
+      if (url.hostname === 'lyricsplus.binimum.org') return Response.json({ ...lyricsPlusFixture,
+        metadata: { title: 'Wake Me Up', artist: 'Avicii', totalDuration: '4:07' } });
+      throw new Error('Unexpected fetch');
+    };
+    const cachedWakeResult = await fetchLyrics(wakeQuery, undefined, biniStaleCache);
+    check(cachedWakeResult?.source === 'lyricsplus' && !cachedWakeResult.cached && evictedCalls.length === 2,
+      'Stale Bini cache for unrequested mix is evicted and reaches LyricsPlus');
+    const freshBiniCache = new LyricsCache();
+    const freshQuery = { song: 'New Bini result', artist: 'Artist' };
+    await freshBiniCache.set(freshQuery, legacyEntry.result);
+    check((await freshBiniCache.get(freshQuery)).hit,
+      'New Bini results remain usable in memory');
+    const freshEntry = (freshBiniCache as unknown as { memory: MemoryCache }).memory.get(getCacheKeys(freshQuery)[0])!;
+    await persistentCache.set(freshEntry);
+    check((await persistentCache.get(freshEntry.key))?.biniMatchPolicy === 1,
+      'Persistent storage writes the Bini matching policy');
+    check((await new LyricsCache().get(freshQuery)).hit,
+      'New Bini results remain usable after reopening the persistent cache');
+    const otherQuery = { song: 'Unrelated cached song', artist: 'Artist' };
+    await persistentCache.set({ ...legacyEntry, key: getCacheKeys(otherQuery)[0],
+      result: { ...legacyEntry.result!, source: 'lyricsplus' } });
+    check((await new LyricsCache().get(otherQuery)).hit,
+      'Other providers keep their existing cached results');
     let lrclibUrl = '';
     globalThis.fetch = async input => {
       if (String(input).includes('/get?')) lrclibUrl = String(input);
@@ -258,6 +334,193 @@ export async function runBoundaryChecks() {
     check((await createLyricsPlusProvider().fetch({ song: soundtrackTitle,
       artist: 'Ellie Goulding', durationMs: 250000 }))?.lines[0].timing === 'word',
     'LyricsPlus accepts a response that retains the quoted soundtrack suffix');
+    for (const [song, album, title, artist] of [
+      ['Love Me Like You Do - From "Fifty Shades Of Grey"',
+        'Fifty Shades Of Grey (Original Motion Picture Soundtrack)', 'Love Me Like You Do', 'Ellie Goulding'],
+      ['Sunflower - Spider-Man: Into the Spider-Verse',
+        'Spider-Man: Into the Spider-Verse (Soundtrack From & Inspired by the Motion Picture)', 'Sunflower', 'Post Malone'],
+      ['I Knew It, I Knew You - From "Toy Story 5"',
+        'I Knew It, I Knew You (From "Toy Story 5")', 'I Knew It, I Knew You', 'Taylor Swift'],
+    ]) {
+      const urls: URL[] = [];
+      globalThis.fetch = async input => {
+        urls.push(new URL(String(input)));
+        return Response.json({ ...lyricsPlusFixture, metadata: { title, artist, totalDuration: '3:20' } });
+      };
+      check((await createLyricsPlusProvider().fetch({ song, album, artist, durationMs: 200000 }))?.lines[0].timing === 'word' &&
+        urls.length === 1 && urls[0].searchParams.get('title') === title,
+      `Screenshot metadata uses one base-title request: ${song}`);
+    }
+    for (const [song, album, artist, baseTitle] of [
+      ['Chuttamalle (From "Devara Part 1")', 'Chuttamalle (From "Devara Part 1")',
+        'Shilpa Rao, Anirudh Ravichander, Ramajogayya Sastry', 'Chuttamalle'],
+      ['Kesariya (From "Brahmastra")', 'Kesariya (From "Brahmastra")',
+        'Pritam, Arijit Singh, Amitabh Bhattacharya', 'Kesariya'],
+      ['Back To You - From 13 Reasons Why – Season 2 Soundtrack',
+        'Back To You (From 13 Reasons Why – Season 2 Soundtrack)', 'Selena Gomez', 'Back To You'],
+    ]) {
+      for (const returnedTitle of new Set([song, baseTitle, album])) {
+        const urls: URL[] = [];
+        globalThis.fetch = async input => {
+          urls.push(new URL(String(input)));
+          return Response.json({ ...lyricsPlusFixture,
+            metadata: { title: returnedTitle, artist, totalDuration: '3:20' } });
+        };
+        check((await createLyricsPlusProvider().fetch({ song, album, artist, durationMs: 200000 }))?.lines[0].timing === 'word' &&
+          urls.length === 1 && urls[0].searchParams.get('title') === baseTitle,
+        `Parenthesized film credit accepts full and base response titles: ${returnedTitle}`);
+      }
+    }
+    const choirSong = 'Like a Prayer - Choir Version From ”Deadpool & Wolverine”';
+    const choirQuery = { song: choirSong, artist: "I'll Take You There Choir",
+      album: 'Deadpool & Wolverine: Madonna\'s "Like a Prayer" EP', durationMs: 200000 };
+    const choirUrls: URL[] = [];
+    globalThis.fetch = async input => {
+      choirUrls.push(new URL(String(input)));
+      return Response.json({ ...lyricsPlusFixture, metadata: { title: choirSong,
+        artist: choirQuery.artist, totalDuration: '3:20' } });
+    };
+    check(cleanTitle(choirSong) === choirSong &&
+      (await createLyricsPlusProvider().fetch(choirQuery))?.lines[0].timing === 'word' &&
+      choirUrls.length === 1 && choirUrls[0].searchParams.get('title') === choirSong,
+    'Existing choir-version lookup retains its version and film credit');
+    globalThis.fetch = async () => Response.json({ ...lyricsPlusFixture,
+      metadata: { title: 'Like a Prayer', artist: choirQuery.artist, totalDuration: '3:20' } });
+    check(await createLyricsPlusProvider().fetch(choirQuery) === null,
+      'A bare original title cannot answer a choir-version request');
+    const callingSong = 'Calling (Spider-Man: Across the Spider-Verse) (Metro Boomin & Swae Lee, NAV, feat. A Boogie Wit da Hoodie)';
+    const callingArtists = 'Metro Boomin, Swae Lee, NAV, A Boogie Wit da Hoodie';
+    const callingQuery = { song: callingSong, artist: callingArtists,
+      album: 'METRO BOOMIN PRESENTS SPIDER-MAN: ACROSS THE SPIDER-VERSE (SOUNDTRACK FROM...', durationMs: 200000 };
+    check(cleanTitle(callingSong) === callingSong, 'Nested feat credit never leaves a broken parenthesis');
+    for (const returnedTitle of ['Calling', 'Calling (Spider-Man: Across the Spider-Verse)', callingSong]) {
+      for (const returnedArtist of [callingArtists, 'Metro Boomin']) {
+      const urls: URL[] = [];
+      globalThis.fetch = async input => {
+        urls.push(new URL(String(input)));
+        return Response.json({ ...lyricsPlusFixture, metadata: { title: returnedTitle,
+          artist: returnedArtist, totalDuration: '3:20' } });
+      };
+      check((await createLyricsPlusProvider().fetch(callingQuery))?.lines[0].timing === 'word' &&
+        urls.length === 1 && urls[0].searchParams.get('title') === 'Calling',
+      `Album and collaborator metadata clean layered credits: ${returnedTitle} / ${returnedArtist}`);
+      }
+    }
+    globalThis.fetch = async () => Response.json({ ...lyricsPlusFixture, metadata: {
+      title: 'Calling (Different Film)', artist: callingArtists, totalDuration: '3:20' } });
+    check(await createLyricsPlusProvider().fetch(callingQuery) === null,
+      'Layered-credit cleanup still rejects a different film response');
+    for (const [song, artist, album] of [
+      ['Song (Live)', 'Artist', 'Live'],
+      ['Song (Different Artist)', 'Artist', 'Unrelated'],
+      ['Song (Film) (Artist)', 'Artist', 'Unrelated'],
+      ['Song (Movie)', 'Artist', 'Someone Presents Movies Soundtrack'],
+    ]) {
+      const urls: URL[] = [];
+      globalThis.fetch = async input => {
+        urls.push(new URL(String(input)));
+        return new Response(null, { status: 404 });
+      };
+      await createLyricsPlusProvider().fetch({ song, artist, album, durationMs: 200000 });
+      const expected = song === 'Song (Film) (Artist)' ? 'Song (Film)' : song;
+      check(urls.length === 1 && urls[0].searchParams.get('title') === expected,
+        `Artist cleanup preserves versions and unconfirmed subtitles: ${song}`);
+    }
+    const featuredRequests: URL[] = [];
+    globalThis.fetch = async input => {
+      const url = new URL(String(input));
+      featuredRequests.push(url);
+      if (url.hostname === 'lyrics-api.binimum.org') return Response.json({ results: [{
+        track_name: 'Scared of the Dark', artist_name: 'Lil Wayne, Ty Dolla $ign, XXXTENTACION',
+        duration: 200, lyricsUrl: 'https://example.com/featured.ttml',
+      }] });
+      return new Response(ttml);
+    };
+    check((await createBiniLyricsProvider().fetch({ song: 'Scared of the Dark (feat. XXXTENTACION)',
+      artist: 'Lil Wayne, Ty Dolla $ign, XXXTENTACION',
+      album: 'Spider-Man: Into the Spider-Verse (Soundtrack From & Inspired by the Motion Picture)',
+      durationMs: 200000 }))?.lines[0].timing === 'line' && featuredRequests.length === 2 &&
+      featuredRequests[0].searchParams.get('track') === 'Scared of the Dark' &&
+      featuredRequests[0].searchParams.get('artist') === 'Lil Wayne',
+    'Existing Bini featured-track lookup retains catalog and TTML behavior');
+    for (const [song, artist, album, lookup, primary] of [
+      ['Self Love (Spider-Man: Across the Spider-Verse) (Metro Boomin & Coi Leray)',
+        'Metro Boomin, Coi Leray', 'METRO BOOMIN PRESENTS SPIDER-MAN: ACROSS THE SPIDER-VERSE (SOUNDTRACK FROM AND INSPIRED BY THE...',
+        'Self Love (Spider-Man: Across the Spider-Verse) (Metro Boomin & Coi Leray)', 'Metro Boomin'],
+      ['All The Stars (with SZA) - From "Black Panther: The Album"',
+        'Kendrick Lamar, SZA', 'Black Panther The Album Music From And Inspired By', 'All The Stars', 'Kendrick Lamar'],
+    ]) {
+      const requests: URL[] = [];
+      globalThis.fetch = async input => {
+        const url = new URL(String(input));
+        requests.push(url);
+        if (url.hostname === 'lyrics-api.binimum.org') return Response.json({ results: [{
+          track_name: song, artist_name: artist, duration: 200, lyricsUrl: 'https://example.com/existing.ttml',
+        }] });
+        return new Response(ttml);
+      };
+      check((await createBiniLyricsProvider().fetch({ song, artist, album, durationMs: 200000 }))?.lines[0].timing === 'line' &&
+        requests.length === 2 && requests[0].searchParams.get('track') === lookup &&
+        requests[0].searchParams.get('artist') === primary,
+      `Already-working Bini lookup remains unchanged: ${song}`);
+    }
+    for (const song of [
+      "You've Got a Friend in Me - From Toy Story",
+      "You've Got a Friend in Me (From \"Toy Story\")",
+      "You've Got a Friend in Me [From ‘Toy Story’]",
+      "You've Got a Friend in Me – From the Original Motion Picture Soundtrack \"Toy Story\"",
+    ]) {
+      const urls: URL[] = [];
+      globalThis.fetch = async input => {
+        urls.push(new URL(String(input)));
+        return Response.json({ ...lyricsPlusFixture,
+          metadata: { title: "You've Got a Friend in Me", artist: 'Randy Newman', totalDuration: '2:04' } });
+      };
+      check(cleanTitle(song) === "You've Got a Friend in Me" &&
+        (await createLyricsPlusProvider().fetch({ song, artist: 'Randy Newman', album: 'Toy Story', durationMs: 124000 }))?.lines[0].timing === 'word' &&
+        urls.length === 1 && urls[0].searchParams.get('title') === "You've Got a Friend in Me",
+      `LyricsPlus cleans an explicit film credit: ${song}`);
+    }
+    for (const song of ['From Here to You', 'Run - Away', 'Song - From "Live at Wembley"',
+      'Song - From ""', 'Song - From', 'Song - From "Any Film" - Live']) {
+      check(cleanTitle(song) === song, `Title cleanup preserves meaningful or incomplete suffix: ${song}`);
+    }
+    check(cleanTitle('Song (Live) - From "Any Film"') === 'Song (Live)' &&
+      cleanTitle('Song - Acoustic - From "Any Film"') === 'Song - Acoustic',
+    'Soundtrack cleanup preserves recording qualifiers before the film credit');
+    for (const [song, album, title] of [
+      ['Song - Up', 'Up (Original Motion Picture Soundtrack)', 'Song'],
+      ['Song (Up)', 'Up', 'Song'], ['Song [Up]', 'Up', 'Song'],
+      ['Song – Film', 'Film', 'Song'], ['Song — Film', 'Film', 'Song'],
+      ['Song - Film', 'Song (Single)', 'Song'], ['Song - Film', 'Song - EP', 'Song'],
+      ['Song - Up', 'Upbeat', 'Song - Up'], ['Run - Away', 'Unrelated Album', 'Run - Away'],
+      ['Song - Live', 'Live at Wembley', 'Song - Live'],
+      ['Song - Acoustic', 'Song - Single', 'Song - Acoustic'],
+      ['Song - Remix', 'Remix', 'Song - Remix'],
+      ['Song - English Version', 'Song - Single', 'Song - English Version'],
+      ['Song (French Version)', 'Song (Single)', 'Song (French Version)'],
+      ['Song - Club Mix', 'Song - EP', 'Song - Club Mix'],
+    ]) {
+      const urls: URL[] = [];
+      globalThis.fetch = async input => {
+        urls.push(new URL(String(input)));
+        return Response.json({ ...lyricsPlusFixture, metadata: { title, artist: 'Artist', totalDuration: '3:20' } });
+      };
+      check((await createLyricsPlusProvider().fetch({ song, album, artist: 'Artist', durationMs: 200000 }))?.lines[0].timing === 'word' &&
+        urls.length === 1 && urls[0].searchParams.get('title') === title,
+      `LyricsPlus uses album evidence without stripping version labels: ${song} / ${album}`);
+    }
+    for (const metadata of [
+      { title: 'Different Song', artist: 'Randy Newman', totalDuration: '2:04' },
+      { title: "You've Got a Friend in Me", artist: 'Different Artist', totalDuration: '2:04' },
+      { title: "You've Got a Friend in Me", artist: 'Randy Newman', totalDuration: '3:04' },
+      { title: "You've Got a Friend in Me (Live)", artist: 'Randy Newman', totalDuration: '2:04' },
+    ]) {
+      globalThis.fetch = async () => Response.json({ ...lyricsPlusFixture, metadata });
+      check(await createLyricsPlusProvider().fetch({ song: "You've Got a Friend in Me - From Toy Story",
+        artist: 'Randy Newman', album: 'Toy Story', durationMs: 124000 }) === null,
+      'Soundtrack lookup rejects the wrong song, artist, duration or recording');
+    }
     const sunflowerUrls: URL[] = [];
     globalThis.fetch = async input => {
       sunflowerUrls.push(new URL(String(input)));
@@ -272,14 +535,14 @@ export async function runBoundaryChecks() {
     }))?.lines[0].timing === 'word' && sunflowerUrls.length === 1 &&
       sunflowerUrls[0].searchParams.get('title') === 'Sunflower' &&
       sunflowerUrls[0].searchParams.get('artist') === 'Post Malone',
-    'LyricsPlus omits the known Spider-Verse movie credit with a different album');
+    'LyricsPlus uses the base title confirmed by a single album');
     sunflowerUrls.length = 0;
     check((await createLyricsPlusProvider().fetch({
       song: 'Sunflower - Spider-Man: Into the Spider-Verse', artist: 'Post Malone',
       durationMs: 158000,
     }))?.lines[0].timing === 'word' && sunflowerUrls.length === 1 &&
-      sunflowerUrls[0].searchParams.get('title') === 'Sunflower',
-    'LyricsPlus omits the movie credit when album metadata is missing');
+      sunflowerUrls[0].searchParams.get('title') === 'Sunflower - Spider-Man: Into the Spider-Verse',
+    'LyricsPlus preserves an ambiguous suffix without album confirmation');
     globalThis.fetch = async () => Response.json({ ...lyricsPlusFixture,
       metadata: { title: 'Sunflower (Different Film)', artist: 'Post Malone, Swae Lee',
         totalDuration: '2:38.040' } });
@@ -618,6 +881,7 @@ export async function runBoundaryChecks() {
     check(neg2 === null && networkCalls > negCallsAfterFirst, 'Transient and unknown misses are retried');
 
     const cleanCache = new LyricsCache();
+    await cleanCache.clear();
     let cleanCalls = 0;
     globalThis.fetch = async input => {
       cleanCalls++;

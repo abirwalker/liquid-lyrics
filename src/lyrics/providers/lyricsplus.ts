@@ -65,35 +65,53 @@ export function adaptLyricsPlus(body: unknown, query: LyricsQuery): LyricsResult
 }
 
 function matchesBroadResult(
-  body: unknown, title: string, originalTitle: string, artist: string, expectedDurationMs: number | null,
+  body: unknown, title: string, originalTitle: string, artists: string, expectedDurationMs: number | null,
 ): boolean {
   if (!isRecord(body) || !isRecord(body.metadata)) return false;
   const metadata = body.metadata;
   const actualDurationMs = durationMs(metadata.totalDuration);
-  const actualTitle = typeof metadata.title === 'string' ? normalizeMatchText(cleanTitle(metadata.title)) : '';
+  const actualTitle = typeof metadata.title === 'string' && typeof metadata.artist === 'string'
+    ? normalizeMatchText(cleanTitle(stripArtistCredit(metadata.title, artists))) : '';
   return (actualTitle === normalizeMatchText(title) || actualTitle === normalizeMatchText(originalTitle)) &&
     typeof metadata.artist === 'string' &&
-    normalizeMatchText(getPrimaryArtist(metadata.artist)) === normalizeMatchText(artist) &&
+    normalizeMatchText(getPrimaryArtist(metadata.artist)) === normalizeMatchText(getPrimaryArtist(artists)) &&
     (expectedDurationMs === null || (actualDurationMs !== undefined &&
       Math.abs(actualDurationMs - expectedDurationMs) <= 4000));
 }
 
-function lookupTitle(song: string, album?: string): string {
-  const title = cleanTitle(song.trim());
-  const separator = title.lastIndexOf(' - ');
-  if (separator < 1) return title;
-  const suffix = normalizeMatchText(title.slice(separator + 3));
+function stripArtistCredit(song: string, artist: string): string {
+  const credit = /\s+\(([^()]+)\)$/.exec(song);
+  if (!credit) return song;
+  const splitArtists = (value: string) => value.split(/\s*(?:,|&|;|\b(?:feat|ft|with)\.?\s+)\s*/i)
+    .map(normalizeMatchText).filter(Boolean);
+  const artists = splitArtists(artist);
+  const credited = splitArtists(credit[1]);
+  return credited.length > 0 && credited.every(name => artists.includes(name))
+    ? song.slice(0, credit.index).trim() : song;
+}
+
+function lookupTitle(song: string, album: string | undefined, artist: string): string {
+  const title = cleanTitle(stripArtistCredit(song.trim(), artist));
+  const parts = /^(.*)\s+[-–—]\s+(.+)$/.exec(title) ??
+    /^(.*)\s+\(([^()]+)\)$/.exec(title) ?? /^(.*)\s+\[([^\[\]]+)\]$/.exec(title);
+  if (!parts || !parts[1].trim()) return title;
+  const suffix = normalizeMatchText(parts[2]);
   const normalizedAlbum = normalizeMatchText(album);
-  return suffix === 'spider man into the spider verse' ||
-    (suffix.length >= 8 && normalizedAlbum.startsWith(suffix))
-    ? title.slice(0, separator) : title;
+  if (!suffix || /\b(?:version|mix|edit|remix|stripped|acoustic|live|instrumental|karaoke|sped up|slowed|rework|vip|demo)\b/.test(suffix)) return title;
+  const releaseTitle = album?.replace(/\s+(?:[-–—]\s*(?:single|ep)|\((?:single|ep)\))\s*$/i, '');
+  const singleTitleMatches = releaseTitle !== album &&
+    normalizeMatchText(releaseTitle) === normalizeMatchText(parts[1]);
+  const albumHasSoundtrack = /\b(?:soundtrack|original motion picture score)\b/.test(normalizedAlbum) &&
+    ` ${normalizedAlbum} `.includes(` ${suffix} `);
+  return singleTitleMatches || albumHasSoundtrack || normalizedAlbum === suffix || normalizedAlbum.startsWith(`${suffix} `)
+    ? parts[1].trim() : title;
 }
 
 export function createLyricsPlusProvider(): LyricsProvider {
   return {
     id: 'lyricsplus',
     async fetch(query: LyricsQuery, signal?: AbortSignal): Promise<LyricsResult | null> {
-      const title = lookupTitle(query.song, query.album);
+      const title = lookupTitle(query.song, query.album, query.artist);
       const artist = getPrimaryArtist(query.artist.trim());
       if (!title || !artist || signal?.aborted) return null;
       const params = new URLSearchParams({ title, artist });
@@ -105,7 +123,7 @@ export function createLyricsPlusProvider(): LyricsProvider {
         const response = await fetch(`${API}?${params}`, { signal: deadline, credentials: 'omit' });
         if (!response.ok) return null;
         const body: unknown = await response.json();
-        if (!matchesBroadResult(body, title, query.song, artist, expectedDurationMs)) return null;
+        if (!matchesBroadResult(body, title, stripArtistCredit(query.song, query.artist), query.artist, expectedDurationMs)) return null;
         const result = adaptLyricsPlus(body, query);
         return deadline.aborted ? null : result;
       } catch {

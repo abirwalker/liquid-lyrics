@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.6] - 2026-10-03
+
+- Match soundtrack titles using film credits and album metadata instead of a hardcoded film name, while preserving recording versions and collaborator credits.
+- Reject unrequested Bini DJ mixes and medleys that can return another song's lyrics.
+- Refresh older Bini cache entries under the corrected matching rules while preserving other providers' cached results.
+
 ## [1.1.5] - 2026-10-03
 
 - Keep the background brightness steady after the final synced lyric ends while the song continues.

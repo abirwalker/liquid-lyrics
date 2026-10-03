@@ -5,6 +5,7 @@ export const POSITIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const NEGATIVE_TTL_MS = 60 * 60 * 1000;           // 1 hour
 export const STATIC_TTL_MS = 24 * 60 * 60 * 1000;
 export const MEMORY_CAPACITY = 100;
+const BINI_MATCH_POLICY = 1;
 const CACHE_KEY_VERSION = 'v4';
 
 export interface CacheEntry {
@@ -12,6 +13,7 @@ export interface CacheEntry {
   result: LyricsResult | null;
   cachedAt: number;
   expiresAt: number;
+  biniMatchPolicy?: number;
 }
 
 export function normalizeString(str: string | undefined): string {
@@ -190,6 +192,12 @@ export class IndexedDbStorage {
       }
     });
   }
+
+}
+
+function isCurrentEntry(entry: CacheEntry): boolean {
+  return entry.result === null || (isValidResult(entry.result) &&
+    (entry.result.source !== 'binilyrics' || entry.biniMatchPolicy === BINI_MATCH_POLICY));
 }
 
 export class LyricsCache {
@@ -209,7 +217,7 @@ export class LyricsCache {
     for (const key of keys) {
       const entry = this.memory.get(key);
       if (entry) {
-        if (entry.result && !isValidResult(entry.result)) {
+        if (!isCurrentEntry(entry)) {
           this.memory.delete(key);
           continue;
         }
@@ -221,8 +229,8 @@ export class LyricsCache {
     for (const key of keys) {
       const entry = await this.db.get(key);
       if (entry) {
-        if (entry.result && !isValidResult(entry.result)) {
-          void this.db.delete(key);
+        if (!isCurrentEntry(entry)) {
+          await this.db.delete(key);
           continue;
         }
         for (const k of keys) {
@@ -255,6 +263,7 @@ export class LyricsCache {
         result,
         cachedAt: now,
         expiresAt,
+        ...(result?.source === 'binilyrics' ? { biniMatchPolicy: BINI_MATCH_POLICY } : {}),
       };
       this.memory.set(key, entry);
       void this.db.set(entry);
