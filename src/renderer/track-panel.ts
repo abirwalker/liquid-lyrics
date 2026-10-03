@@ -52,6 +52,7 @@ export class TrackPanel {
   private album = document.createElement('span');
   private mounted = false;
   private nowPlayingState: 'visible' | 'hidden' | 'unknown' = 'unknown';
+  private collapsedSidebarWidth: number | null = null;
   private frame: number | null = null;
   private hasArtwork = false;
   private hasTitle = false;
@@ -155,11 +156,31 @@ export class TrackPanel {
       this.overlay.style.setProperty('--ll-artwork-column-width', `${artworkColumn}px`);
       this.overlay.style.setProperty('--ll-view-height', `${height}px`);
       const coverSize = Math.min(artworkColumn, height * 0.45 * zoom);
+      const referenceWidth = this.getNoCoverReferenceWidth(width);
+      const referenceCoverSize = Math.min(referenceWidth * 0.28, height * 0.45) * zoom;
       this.overlay.style.setProperty('--ll-view-width', `${width}px`);
       this.overlay.style.setProperty('--ll-cover-size', `${Math.max(0, coverSize)}px`);
       this.overlay.style.setProperty('--ll-artwork-lyric-size', `${Math.max(28, coverSize * 0.115)}px`);
+      this.overlay.style.setProperty('--ll-lyric-size', `${Math.max(28, referenceCoverSize * 0.115)}px`);
       this.overlay.classList.toggle('ll-with-track', visible);
       this.element.hidden = !visible;
     });
+  }
+
+  private getNoCoverReferenceWidth(width: number): number {
+    const panel = document.getElementById('Desktop_PanelContainer_Id');
+    if (!panel) return width;
+    for (let sidebar: HTMLElement | null = panel; sidebar; sidebar = sidebar.parentElement) {
+      if (getComputedStyle(sidebar).gridArea.split('/')[0].trim() !== 'right-sidebar' ||
+          !sidebar.parentElement?.contains(this.overlay)) continue;
+      const sidebarWidth = sidebar.getBoundingClientRect().width;
+      if (panel.closest('[aria-hidden="true"], [hidden]')) {
+        this.collapsedSidebarWidth = sidebarWidth;
+        return width;
+      }
+      // Recover the main-view width before the shared NPV/Queue sidebar expanded.
+      return width + Math.max(0, sidebarWidth - (this.collapsedSidebarWidth ?? 0));
+    }
+    return width;
   }
 }

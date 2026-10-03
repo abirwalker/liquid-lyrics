@@ -297,6 +297,8 @@ try {
   assert.equal(await evaluate("document.querySelector('.ll-plain-lyrics > p').dataset.creditFixture"), 'plain',
     'writer update preserves plain lyric elements');
   assert.equal(await evaluate("document.querySelector('.ll-player').hidden"), true);
+  assert.equal(await evaluate("getComputedStyle(document.getElementById('liquid-lyrics-overlay'), '::after').backgroundColor"),
+    'rgba(0, 0, 0, 0.65)', 'plain lyric contrast is preserved');
   await evaluate('fixture.view.setLyrics(null)');
   assert.equal(await evaluate("document.querySelector('.ll-credits')"), null, 'no stale credits after clearing lyrics');
   assert.equal(await evaluate("document.querySelector('.ll-status-msg').textContent"), 'No lyrics available');
@@ -362,10 +364,16 @@ try {
   assert.equal(longFinal.lastActive, true, 'long final lyric remains active');
   assert.equal(longFinal.filter, 'blur(0px)', 'credits remain readable below an active final lyric');
   assert.equal(longFinal.previousBlurred, true, 'credit fix preserves lyric blur');
+  const beforeLyricEndShade = await evaluate("getComputedStyle(document.getElementById('liquid-lyrics-overlay'), '::after').backgroundColor");
+  assert.equal(beforeLyricEndShade, 'rgba(0, 0, 0, 0.16)', 'active final lyric uses normal background shade');
   await evaluate('fixture.setProgress(121000)');
   await wait(400);
   assert.equal(await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).filter"), 'blur(0px)',
     'credits stay clear when playback crosses the final lyric end');
+  assert.equal(await evaluate("document.querySelector('[data-bottom-line=true]').dataset.focused"), 'true',
+    'credits become focused after the final lyric');
+  assert.equal(await evaluate("getComputedStyle(document.getElementById('liquid-lyrics-overlay'), '::after').backgroundColor"),
+    beforeLyricEndShade, 'credits focus does not darken the background');
   const creditBlur = async () => {
     const filter = await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).filter");
     return filter === 'none' ? 0 : parseFloat(filter.slice(5));
@@ -373,6 +381,8 @@ try {
   await evaluate('fixture.setProgress(24000)');
   await wait(600);
   const beforeFinalBlur = await creditBlur();
+  assert.equal(await evaluate("getComputedStyle(document.getElementById('liquid-lyrics-overlay'), '::after').backgroundColor"),
+    beforeLyricEndShade, 'seeking before the final lyric keeps the background shade');
   assert.ok(beforeFinalBlur > 0, 'credits remain blurred before the final lyric');
   await evaluate('fixture.setProgress(28000)');
   await wait(120);
@@ -588,6 +598,12 @@ try {
       })()`);
       assert.ok(Math.abs(size.dpr - zoom) < .01, 'native browser zoom is active');
       assert.ok(size.visible && size.fits, `${zoom}x ${timing}: zoom leaves artwork and lyrics readable`);
+      await evaluate(`document.getElementById('artwork-sidebar').setAttribute('aria-hidden','false')`);
+      await wait(100);
+      const noCoverFont = await evaluate(`parseFloat(getComputedStyle(document.querySelector('${timing === 'none' ? '.ll-plain-lyrics' : '.FmKaba_lyricMainLine'}')).fontSize) * devicePixelRatio`);
+      assert.ok(Math.abs(noCoverFont - size.font) < .02, `${zoom}x ${timing}: default font matches the cover font`);
+      await evaluate(`document.getElementById('artwork-sidebar').setAttribute('aria-hidden','true')`);
+      await wait(100);
       if (zoomSizes.has(timing)) {
         const baseline = zoomSizes.get(timing);
         if (zoom > 1) assert.ok(size.cover > baseline.cover * 1.1 && size.font > baseline.font * 1.1,
@@ -600,6 +616,41 @@ try {
     }
   }
   await send('Target.closeTarget', { targetId: settingsTarget });
+  const fontLayoutRestore = await evaluate(`(() => {
+    const root = document.querySelector('.Root__main-view');
+    const sidebar = document.getElementById('artwork-sidebar');
+    const styles = {root:root.getAttribute('style'), sidebar:sidebar.getAttribute('style')};
+    const grid = document.createElement('div'); grid.id='font-layout-grid';
+    grid.style.cssText='display:grid;grid-template-areas:"main-view right-sidebar";grid-template-columns:minmax(0,1fr) 32px;gap:8px';
+    root.before(grid); grid.append(root,sidebar);
+    root.style.gridArea='main-view'; root.style.minWidth='0';
+    sidebar.style.cssText='grid-area:right-sidebar;overflow:hidden';
+    return styles;
+  })()`);
+  for (const [width, height] of [[1438,882], [2116,1242], [3398,1962], [1120,800]]) {
+    await command('Emulation.setDeviceMetricsOverride', { width:width+88, height:height+64, deviceScaleFactor:1, mobile:false });
+    await evaluate(`fixture.resize(${height})`);
+    for (const timing of ['line','word','none']) {
+      await evaluate(`document.getElementById('font-layout-grid').style.gridTemplateColumns='minmax(0,1fr) 32px';
+        document.getElementById('artwork-sidebar').setAttribute('aria-hidden','true');
+        fixture.view.setLyrics(fixture.fixture('${timing}'))`);
+      await wait(300);
+      const readFont = () => evaluate(`parseFloat(getComputedStyle(document.querySelector('${timing === 'none' ? '.ll-plain-lyrics' : '.FmKaba_lyricMainLine'}')).fontSize)`);
+      const referenceFont = await readFont();
+      await evaluate(`document.getElementById('font-layout-grid').style.gridTemplateColumns='minmax(0,1fr) 420px';
+        document.getElementById('artwork-sidebar').setAttribute('aria-hidden','false')`);
+      await wait(100);
+      assert.equal(await artworkVisible(), false, 'NPV opens and hides the artwork');
+      assert.ok(Math.abs(await readFont() - referenceFont) < .02, `${width}px ${timing}: NPV width change preserves font size`);
+    }
+  }
+  await evaluate(`(() => {
+    const styles=${JSON.stringify(fontLayoutRestore)};
+    const root=document.querySelector('.Root__main-view'),sidebar=document.getElementById('artwork-sidebar');
+    const grid=document.getElementById('font-layout-grid'); grid.before(root);document.body.append(sidebar);grid.remove();
+    if(styles.root === null)root.removeAttribute('style');else root.setAttribute('style',styles.root);
+    sidebar.setAttribute('style',styles.sidebar);
+  })()`);
   await evaluate('fixture.resize(800)');
   await command('Emulation.setDeviceMetricsOverride', { width: 1548, height: 964, deviceScaleFactor: 1, mobile: false });
   await evaluate(`(() => {
