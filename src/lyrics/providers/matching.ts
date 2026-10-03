@@ -17,8 +17,18 @@ export function normalizeMatchText(value: string | undefined): string {
 }
 
 function artistNames(value: string): string[] {
-  return value.split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bwith\b)\s*/gi)
+  return value.split(/\s*(?:,|;|&|\bfeat\.?\b|\bft\.?\b|\bwith\b)\s*/gi)
     .map(part => normalizeMatchText(part)).filter(Boolean);
+}
+
+export function titleArtistCredits(title: string): string[] {
+  return [...title.matchAll(/(?:[([]\s*(?:feat|ft|with)\.?|\b(?:feat|ft)\.?)\s+([^()[\]]+)/gi)]
+    .flatMap(match => match[1].split(/\s*(?:,|;|&|\b(?:feat|ft|with)\.?)\s*/gi))
+    .map(name => name.trim()).filter(Boolean);
+}
+
+function containsArtist(title: string, artist: string): boolean {
+  return ` ${normalizeMatchText(title)} `.includes(` ${artist} `);
 }
 
 function textMatches(left: string, right: string): boolean {
@@ -40,9 +50,12 @@ export function scoreCandidate(query: LyricsQuery, candidate: MatchCandidate): n
 
   const exactTitle = candidate.titles.some(title => normalizeMatchText(title) === normalizeMatchText(query.song));
   if (!candidate.titles.some(title => textMatches(title, query.song))) return null;
-  const wantedArtists = artistNames(query.artist);
-  const artistMatch = wantedArtists.some(wanted => candidate.artists.some(artist =>
-    artistNames(artist).some(name => textMatches(wanted, name))));
+  const wantedArtists = [...artistNames(query.artist), ...titleArtistCredits(query.song).flatMap(artistNames)];
+  const returnedArtists = [...candidate.artists.flatMap(artistNames),
+    ...candidate.titles.flatMap(titleArtistCredits).flatMap(artistNames)];
+  const artistMatch = wantedArtists.length > 0 && wantedArtists.every(wanted =>
+    returnedArtists.includes(wanted) || candidate.titles.some(title => containsArtist(title, wanted))) &&
+    returnedArtists.every(artist => wantedArtists.includes(artist) || containsArtist(query.song, artist));
   if (!artistMatch) return null;
 
   let score = (exactTitle ? 120 : 55) + 80;
