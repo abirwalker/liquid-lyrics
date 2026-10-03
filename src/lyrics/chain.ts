@@ -113,11 +113,10 @@ export async function fetchLyrics(
 
   let cachedFallback: LyricsResult | null = null;
   if (!query.skipCache && cache) {
-    for (const candidate of cleanQ ? [query, cleanQ] : [query]) {
-      const cached = await readCache(candidate);
-      if (!cached.hit || !cached.result) continue;
+    const cached = await readCache(query);
+    if (cached.hit && cached.result) {
       if (lyricQuality(cached.result) === 3) return { ...cached.result, cached: true };
-      if (lyricQuality(cached.result) > lyricQuality(cachedFallback)) cachedFallback = cached.result;
+      cachedFallback = cached.result;
     }
     if (cachedFallback && lyricQuality(cachedFallback) === 2) return { ...cachedFallback, cached: true };
   }
@@ -141,7 +140,6 @@ export async function fetchLyrics(
   if (cache) {
     if (result !== null) {
       await cache.set(query, result);
-      if (cleanQ) await cache.set(cleanQ, result);
     }
   }
 

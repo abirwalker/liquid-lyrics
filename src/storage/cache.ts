@@ -6,7 +6,7 @@ export const NEGATIVE_TTL_MS = 60 * 60 * 1000;           // 1 hour
 export const STATIC_TTL_MS = 24 * 60 * 60 * 1000;
 export const MEMORY_CAPACITY = 100;
 const BINI_MATCH_POLICY = 1;
-const CACHE_KEY_VERSION = 'v4';
+const CACHE_KEY_VERSION = 'v2';
 
 export interface CacheEntry {
   key: string;
@@ -26,12 +26,16 @@ export function normalizeString(str: string | undefined): string {
 export function getCacheKeys(query: LyricsQuery): string[] {
   const keys: string[] = [];
   if (query.spotifyId?.trim()) {
-    keys.push(`${CACHE_KEY_VERSION}:id:${query.spotifyId.trim()}`);
+    keys.push(`${CACHE_KEY_VERSION}:recording-id:${query.spotifyId.trim()}`);
   }
   const artist = normalizeString(query.artist);
   const song = normalizeString(query.song);
   if (artist && song) {
-    keys.push(`${CACHE_KEY_VERSION}:meta:${artist}:${song}`);
+    keys.push(`${CACHE_KEY_VERSION}:meta:${JSON.stringify([
+      artist, song, normalizeString(query.album),
+      typeof query.durationMs === 'number' && Number.isFinite(query.durationMs) && query.durationMs > 0
+        ? query.durationMs : null,
+    ])}`);
   }
   return keys;
 }

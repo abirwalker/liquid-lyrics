@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.7] - 2026-10-03
+
+- Match featured artists across title and artist credits while keeping solo, collaboration and remix recordings distinct.
+- Preserve featured credits through cleaned-title fallbacks, including credits listed only in the title.
+- Separate cached recordings by album and duration, and prevent old cache entries from bypassing the corrected matching rules.
+- Validate LRCLIB recording credits before accepting direct lookup results.
+
 ## [1.1.6] - 2026-10-03
 
 - Match soundtrack titles using film credits and album metadata instead of a hardcoded film name, while preserving recording versions and collaborator credits.

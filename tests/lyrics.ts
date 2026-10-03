@@ -10,7 +10,7 @@ import type { LyricsResult as Lyrics, LyricsProvider } from '../src/types/types'
 import { fetchLyricsChain, createDefaultChain, fetchLyrics } from '../src/lyrics/chain';
 import { LyricsCache, MemoryCache, IndexedDbStorage, getCacheKeys, normalizeString } from '../src/storage/cache';
 import { extractQuery } from '../src/player/listener';
-import { cleanTitle } from '../src/lyrics/cleaner';
+import { cleanTitle, createCleanQuery } from '../src/lyrics/cleaner';
 import { runBudgetChecks } from './request-budget';
 import { runCreditChecks } from './credits';
 import wakeCatalog from './wake-me-up-catalog.json';
@@ -165,8 +165,11 @@ export async function runBoundaryChecks() {
   const cjkQuery = { song: '芒种', artist: '音阙诗听, 赵方婧', durationMs: 175000 };
   const cjkPlan = createBiniSearchPlan(cjkQuery)!;
   check(cjkPlan.song === '芒种' && cjkPlan.artist === '音阙诗听' &&
-    selectBiniItems([{ track_name: '芒种', artist_name: '音阙诗听', duration: 175, lyricsUrl: 'https://example.com/a.ttml' }], cjkQuery).length === 1,
+    selectBiniItems([{ track_name: '芒种', artist_name: '音阙诗听, 赵方婧', duration: 175, lyricsUrl: 'https://example.com/a.ttml' }], cjkQuery).length === 1,
   'CJK tracks use artist matching without a unique title-only result');
+  check(selectBiniItems([{ track_name: '芒种', artist_name: '音阙诗听', duration: 175,
+    lyricsUrl: 'https://example.com/a.ttml' }], cjkQuery).length === 0,
+    'A matching duration cannot substitute for a missing collaborator in catalog metadata');
   const lyricsPlusFixture = { type: 'Word', metadata: { title: 'Test', artist: 'Artist', totalDuration: '3:20' },
     lyrics: [{ time: 1000, duration: 700, text: 'Hello world', syllabus: [
       { time: 1000, duration: 300, text: 'Hello ' }, { time: 1300, duration: 400, text: 'world' },
@@ -261,7 +264,7 @@ export async function runBoundaryChecks() {
       lines: [{ text: 'Wrong Titanium medley words', timing: 'line', startMs: 1000, endMs: 2000, segments: [{ text: 'Wrong Titanium medley words', startMs: null, endMs: null, role: null }], agent: null }],
     });
     const legacyMemory = (biniStaleCache as unknown as { memory: MemoryCache }).memory;
-    const legacyEntry = legacyMemory.get('v4:meta:avicii:wake me up')!;
+    const legacyEntry = legacyMemory.get(getCacheKeys(wakeQuery)[0])!;
     delete legacyEntry.biniMatchPolicy;
     const persistentCache = new IndexedDbStorage();
     await persistentCache.set(legacyEntry);
@@ -401,9 +404,10 @@ export async function runBoundaryChecks() {
         return Response.json({ ...lyricsPlusFixture, metadata: { title: returnedTitle,
           artist: returnedArtist, totalDuration: '3:20' } });
       };
-      check((await createLyricsPlusProvider().fetch(callingQuery))?.lines[0].timing === 'word' &&
+      const callingResult = await createLyricsPlusProvider().fetch(callingQuery);
+      check((returnedArtist === callingArtists || returnedTitle === callingSong ? callingResult?.lines[0].timing === 'word' : callingResult === null) &&
         urls.length === 1 && urls[0].searchParams.get('title') === 'Calling',
-      `Album and collaborator metadata clean layered credits: ${returnedTitle} / ${returnedArtist}`);
+      `Layered credits require all requested collaborators: ${returnedTitle} / ${returnedArtist}`);
       }
     }
     globalThis.fetch = async () => Response.json({ ...lyricsPlusFixture, metadata: {
@@ -538,7 +542,7 @@ export async function runBoundaryChecks() {
     'LyricsPlus uses the base title confirmed by a single album');
     sunflowerUrls.length = 0;
     check((await createLyricsPlusProvider().fetch({
-      song: 'Sunflower - Spider-Man: Into the Spider-Verse', artist: 'Post Malone',
+      song: 'Sunflower - Spider-Man: Into the Spider-Verse', artist: 'Post Malone, Swae Lee',
       durationMs: 158000,
     }))?.lines[0].timing === 'word' && sunflowerUrls.length === 1 &&
       sunflowerUrls[0].searchParams.get('title') === 'Sunflower - Spider-Man: Into the Spider-Verse',
@@ -844,10 +848,115 @@ export async function runBoundaryChecks() {
     globalThis.fetch = async () => { requested = true; return new Response('unexpected'); };
     for (const provider of createDefaultChain()) check(await provider.fetch(query, stopped.signal) === null, 'Pre-aborted provider returns null');
     check(!requested, 'Pre-aborted providers make no network requests');
+    const featured = { song: '1989 (feat. Charli Lucas)', artist: 'Nightly, Charli Lucas',
+      album: '1989 - Single', durationMs: 154000 };
+    const cleanFeatured = createCleanQuery(featured)!;
+    check(cleanFeatured.song === '1989' && cleanFeatured.artist === featured.artist &&
+      cleanFeatured.album === featured.album && cleanFeatured.durationMs === featured.durationMs,
+      'Title cleanup preserves the full recording metadata');
+    for (const artist of ['Nightly', 'Nightly, Fly By Midnight', 'Charli Lucas', 'Nightly, Charli Lucas Tribute']) {
+      check(scoreCandidate(featured, { titles: ['1989'], artists: [artist], durationMs: 155000 }) === null,
+        `Featured recording rejects incomplete or conflicting artists: ${artist}`);
+      check(scoreCandidate(cleanFeatured, { titles: ['1989'], artists: [artist], durationMs: 155000 }) === null,
+        `Cleaned fallback retains the featured artist constraint: ${artist}`);
+    }
+    check(scoreCandidate(featured, { titles: ['1989'], artists: ['Charli Lucas', 'Nightly'], durationMs: 155000 }) !== null,
+      'Artist order does not change recording identity');
+    const catalog = [
+      { track_name: '1989', artist_name: 'Nightly', duration: 204, isrc: 'QM24S2506341' },
+      { track_name: '1989', artist_name: 'Nightly, Fly By Midnight', duration: 186, isrc: 'QM24S2602188' },
+      { track_name: '1989', artist_name: 'Nightly, Charli Lucas', duration: 155, isrc: 'QM24S2601449' },
+      { track_name: '1989 - Leondis remix', artist_name: 'Nightly', duration: 176, isrc: 'QM24S2601451' },
+    ].map(item => ({ ...item, lyricsUrl: `https://lrc.red/s/${item.isrc}.ttml` }));
+    check(selectBiniItems(catalog, featured).map(item => item.isrc).join() === 'QM24S2601449',
+      'The supplied 1989 catalog selects only the Charli Lucas recording');
+    check(selectBiniItems(catalog.map(item => ({ ...item, duration: 155 })), featured)
+      .map(item => item.isrc).join() === 'QM24S2601449',
+      'Artist identity disambiguates recordings even with identical durations');
+    globalThis.fetch = async () => Response.json({ ...lyricsPlusFixture, metadata: {
+      title: '1989', artist: 'Nightly', totalDuration: '2:35' } });
+    check(await createLyricsPlusProvider().fetch(featured) === null,
+      'LyricsPlus cannot answer a featured recording with primary-only metadata');
+    for (const artistName of ['Nightly', 'Nightly, Fly By Midnight', 'Nightly, Charli Lucas']) {
+      globalThis.fetch = async input => String(input).includes('/search?') ? Response.json([]) : Response.json({
+        trackName: '1989', artistName, duration: 155, syncedLyrics: '[00:01]Recording fixture',
+      });
+      const lrclib = await createLrclibProvider().fetch(featured);
+      check(artistName === featured.artist ? lrclib?.source === 'lrclib' : lrclib === null,
+        `LRCLIB exact lookup validates the collaborator: ${artistName}`);
+    }
+    const recordingCache = new LyricsCache();
+    const heatSolo = { song: 'Heat Waves', artist: 'Glass Animals', album: 'Dreamland', durationMs: 239000 };
+    const heatFeatured = { ...heatSolo, artist: 'Glass Animals, iann dior', album: 'Heat Waves' };
+    const heatCatalog = [heatSolo, heatFeatured].map((recording, index) => ({
+      track_name: recording.song, artist_name: recording.artist, album_name: recording.album,
+      duration: 239, isrc: `heat-fixture-${index}`, lyricsUrl: `https://example.com/heat-${index}.ttml`,
+    }));
+    for (const title of ['Heat Waves (feat. iann dior)', 'Heat Waves (with iann dior)', 'Heat Waves - iann dior']) {
+      check(scoreCandidate(heatFeatured, { titles: [title], artists: ['Glass Animals'], durationMs: 239000 }) !== null,
+        `A featured artist named in the title satisfies the credit: ${title}`);
+    }
+    check(scoreCandidate(heatSolo, { titles: ['Heat Waves (feat. iann dior)'], artists: ['Glass Animals'],
+      durationMs: 239000 }) === null, 'Title-only feature credit cannot answer a solo request');
+    check(scoreCandidate(heatFeatured, { titles: ['Heat Waves (feat. iann diorama)'], artists: ['Glass Animals'],
+      durationMs: 239000 }) === null, 'Partial artist substrings cannot satisfy a featured credit');
+    const titleOnlyFeature = createCleanQuery({ ...heatSolo, song: 'Heat Waves (feat. iann dior)' })!;
+    check(titleOnlyFeature.artist === heatFeatured.artist && scoreCandidate(titleOnlyFeature, {
+      titles: ['Heat Waves'], artists: ['Glass Animals'], durationMs: 239000,
+    }) === null, 'Cleaning a title-only guest preserves that guest in fallback identity');
+    const waiting = { song: 'Waiting', artist: 'Vicetone, Daisy Guttridge', durationMs: 205714 };
+    check(selectBiniItems([{ track_name: 'Waiting (feat. Daisy Guttridge)', artist_name: 'Vicetone',
+      duration: 206, lyricsUrl: 'https://lrc.red/s/CA6D21900139.ttml' }], waiting).length === 1,
+      'Waiting accepts the real Bini entry whose guest credit appears only in its title');
+    globalThis.fetch = async () => Response.json({ ...lyricsPlusFixture, metadata: {
+      title: 'Waiting (feat. Daisy Guttridge)', artist: 'Vicetone', totalDuration: '3:25.714',
+    } });
+    check((await createLyricsPlusProvider().fetch(waiting))?.source === 'lyricsplus',
+      'Waiting accepts LyricsPlus metadata with a title-only guest credit');
+    check(selectBiniItems(heatCatalog, heatSolo).map(item => item.isrc).join() === 'heat-fixture-0',
+      'Identical Heat Waves titles and durations keep the solo recording distinct');
+    check(selectBiniItems(heatCatalog, heatFeatured).map(item => item.isrc).join() === 'heat-fixture-1',
+      'Identical Heat Waves titles and durations select the iann dior collaboration');
+    check(createCleanQuery(heatFeatured) === null,
+      'An identical title never triggers a fallback that removes the collaborator');
+    globalThis.fetch = async input => String(input).includes('/search?') ? Response.json([]) : Response.json({
+      trackName: 'Heat Waves', artistName: heatFeatured.artist, duration: 239,
+      syncedLyrics: '[00:01]Featured Heat Waves fixture',
+    });
+    check(await createLrclibProvider().fetch(heatSolo) === null,
+      'LRCLIB exact lookup cannot answer the solo song with collaboration metadata');
+    await recordingCache.set(heatSolo, fromLRC('lyricsplus', '[00:01]Solo Heat Waves fixture')!);
+    check(!(await recordingCache.get(heatFeatured)).hit,
+      'Solo Heat Waves cache cannot answer the identically titled collaboration');
+    await recordingCache.set(heatFeatured, fromLRC('lyricsplus', '[00:01]Featured Heat Waves fixture')!);
+    check((await recordingCache.get(heatSolo)).result?.lines[0].text === 'Solo Heat Waves fixture' &&
+      (await recordingCache.get(heatFeatured)).result?.lines[0].text === 'Featured Heat Waves fixture',
+      'Both Heat Waves recordings retain their own cached lyrics');
+    await recordingCache.clear();
+    const solo = { song: '1989', artist: 'Nightly', album: 'THE VOID', durationMs: 204500 };
+    await recordingCache.set(solo, fromLRC('lyricsplus', '[00:01]Solo recording fixture')!);
+    await recordingCache.set(cleanFeatured, fromLRC('lyricsplus', '[00:01]Clean alias fixture')!);
+    let recordingRequests = 0;
+    globalThis.fetch = async () => { recordingRequests++; return new Response(null, { status: 404 }); };
+    check(await fetchLyrics(featured, undefined, recordingCache) === null && recordingRequests > 0,
+      'Solo and cleaned cache aliases cannot bypass featured recording validation');
+    check(getCacheKeys(solo)[0] !== getCacheKeys({ ...solo, durationMs: 154000 })[0] &&
+      getCacheKeys(solo)[0] !== getCacheKeys({ ...solo, album: '1989 - Single' })[0],
+      'Metadata cache keys distinguish album and duration');
+    const oldMemory = new MemoryCache();
+    const oldEntry = { key: 'v2:id:charli', result: fromLRC('lyricsplus', '[00:01]Old wrong recording')!,
+      cachedAt: Date.now(), expiresAt: Date.now() + 60000 };
+    oldMemory.set(oldEntry.key, oldEntry);
+    await new IndexedDbStorage().set(oldEntry);
+    const oldCache = new LyricsCache();
+    (oldCache as unknown as { memory: MemoryCache }).memory = oldMemory;
+    check(!(await oldCache.get({ ...featured, spotifyId: 'charli' })).hit,
+      'Legacy memory and persistent ID entries cannot retain poisoned recording selections');
+
     // Cache boundary checks
     check(normalizeString('  Glass  Animals ') === 'glass animals', 'Cache key normalization');
     const cacheKeys = getCacheKeys({ song: 'Heat Waves', artist: 'Glass Animals', spotifyId: '123' });
-    check(cacheKeys.includes('v4:id:123') && cacheKeys.includes('v4:meta:glass animals:heat waves'), 'Versioned cache dual keys');
+    check(cacheKeys.includes('v2:recording-id:123') && cacheKeys.some(key => key.startsWith('v2:meta:')), 'Versioned cache dual keys');
 
     const testCache = new LyricsCache();
     let networkCalls = 0;

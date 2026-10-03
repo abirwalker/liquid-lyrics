@@ -1,4 +1,5 @@
 import type { LyricsQuery } from '../types/types';
+import { normalizeMatchText, titleArtistCredits } from './providers/matching';
 
 function stripSoundtrackCredit(title: string): string {
   const credit = /\s+(?:[-–—]\s*from\s+(.+)|\(from\s+([^()]*)\)|\[from\s+([^\[\]]*)\])\s*$/i.exec(title);
@@ -40,19 +41,17 @@ export function getPrimaryArtist(artist: string): string {
 
 export function createCleanQuery(query: LyricsQuery): LyricsQuery | null {
   const cleanedSong = cleanTitle(query.song);
-  const primaryArtist = getPrimaryArtist(query.artist);
 
   const isSongChanged = cleanedSong && cleanedSong.toLowerCase() !== query.song.toLowerCase().trim();
-  const isArtistChanged = primaryArtist && primaryArtist.toLowerCase() !== query.artist.toLowerCase().trim();
 
-  if (!isSongChanged && !isArtistChanged) {
+  if (!isSongChanged) {
     return null;
   }
 
   return {
+    ...query,
     song: cleanedSong || query.song,
-    artist: primaryArtist || query.artist,
-    album: query.album ? cleanTitle(query.album) || query.album : undefined,
-    durationMs: query.durationMs,
+    artist: [query.artist, ...titleArtistCredits(query.song).filter(artist =>
+      !` ${normalizeMatchText(query.artist)} `.includes(` ${normalizeMatchText(artist)} `))].join(', '),
   };
 }
