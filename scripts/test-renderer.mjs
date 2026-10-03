@@ -297,6 +297,8 @@ try {
   assert.equal(await evaluate("document.querySelector('.ll-plain-lyrics > p').dataset.creditFixture"), 'plain',
     'writer update preserves plain lyric elements');
   assert.equal(await evaluate("document.querySelector('.ll-player').hidden"), true);
+  assert.equal(await evaluate("getComputedStyle(document.getElementById('liquid-lyrics-overlay'), '::after').backgroundColor"),
+    'rgba(0, 0, 0, 0.65)', 'plain lyric contrast is preserved');
   await evaluate('fixture.view.setLyrics(null)');
   assert.equal(await evaluate("document.querySelector('.ll-credits')"), null, 'no stale credits after clearing lyrics');
   assert.equal(await evaluate("document.querySelector('.ll-status-msg').textContent"), 'No lyrics available');
@@ -362,10 +364,16 @@ try {
   assert.equal(longFinal.lastActive, true, 'long final lyric remains active');
   assert.equal(longFinal.filter, 'blur(0px)', 'credits remain readable below an active final lyric');
   assert.equal(longFinal.previousBlurred, true, 'credit fix preserves lyric blur');
+  const beforeLyricEndShade = await evaluate("getComputedStyle(document.getElementById('liquid-lyrics-overlay'), '::after').backgroundColor");
+  assert.equal(beforeLyricEndShade, 'rgba(0, 0, 0, 0.16)', 'active final lyric uses normal background shade');
   await evaluate('fixture.setProgress(121000)');
   await wait(400);
   assert.equal(await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).filter"), 'blur(0px)',
     'credits stay clear when playback crosses the final lyric end');
+  assert.equal(await evaluate("document.querySelector('[data-bottom-line=true]').dataset.focused"), 'true',
+    'credits become focused after the final lyric');
+  assert.equal(await evaluate("getComputedStyle(document.getElementById('liquid-lyrics-overlay'), '::after').backgroundColor"),
+    beforeLyricEndShade, 'credits focus does not darken the background');
   const creditBlur = async () => {
     const filter = await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).filter");
     return filter === 'none' ? 0 : parseFloat(filter.slice(5));
@@ -373,6 +381,8 @@ try {
   await evaluate('fixture.setProgress(24000)');
   await wait(600);
   const beforeFinalBlur = await creditBlur();
+  assert.equal(await evaluate("getComputedStyle(document.getElementById('liquid-lyrics-overlay'), '::after').backgroundColor"),
+    beforeLyricEndShade, 'seeking before the final lyric keeps the background shade');
   assert.ok(beforeFinalBlur > 0, 'credits remain blurred before the final lyric');
   await evaluate('fixture.setProgress(28000)');
   await wait(120);

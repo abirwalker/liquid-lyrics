@@ -2,7 +2,7 @@
   "name": "Liquid Lyrics",
   "description": "An Apple Music-inspired lyrics view for Spotify, with word-by-word highlighting, backing vocals and an animated background.",
   "preview": "docs/preview.gif",
-  "main": "Extension/Build/v1.1.4/liquid-lyrics.js",
+  "main": "Extension/Build/v1.1.5/liquid-lyrics.js",
   "readme": "README.md",
   "authors": [
     {
@@ -16,5 +16,5 @@
     "word-sync",
     "apple-music"
   ],
-  "version": "1.1.4"
+  "version": "1.1.5"
 }

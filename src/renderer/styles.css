@@ -367,7 +367,6 @@ button[data-testid="lyrics-button"],
   filter: blur(0px) !important;
 }
 
-#liquid-lyrics-overlay:has(.ll-player [data-bottom-line="true"][data-focused="true"])::after,
 #liquid-lyrics-overlay:has(.ll-plain-lyrics:not([hidden]) .ll-credits)::after {
   background: rgb(0 0 0 / 65%);
 }
