@@ -1,4 +1,4 @@
-﻿import type { LyricsProvider, LyricsQuery, LyricsResult } from '../../types/types';
+import type { LyricsProvider, LyricsQuery, LyricsResult } from '../../types/types';
 import { hasSyncedLyrics, isRecord } from '../../types/types';
 import { fromTTML } from '../formats';
 import { cleanTitle, getPrimaryArtist } from '../cleaner';
@@ -43,12 +43,15 @@ export function selectBiniItems(
   query: LyricsQuery,
 ): BiniItem[] {
   const items = values.filter(isBiniItem);
+  const mixMarker = /^(?:mixed|dj mix|medley|mash[ -]?up)$|(?:[([]|\s[-–—]\s)\s*(?:mixed|dj mix|medley|mash[ -]?up)\s*(?:[)\]]|$)/i;
+  const requestedMix = mixMarker.test(query.song) || mixMarker.test(query.album ?? '');
   const scored = items.map(item => ({ item, score: scoreCandidate(query, {
     titles: [item.track_name ?? ''], artists: [item.artist_name ?? ''],
     albums: item.album_name ? [item.album_name] : [],
     durationMs: typeof item.duration === 'number' ? item.duration * 1000 : undefined,
-  }) }));
-  return scored.filter((entry): entry is { item: BiniItem; score: number } => entry.score !== null)
+  }), mixed: mixMarker.test(item.track_name ?? '') || mixMarker.test(item.album_name ?? '') }));
+  return scored.filter((entry): entry is { item: BiniItem; score: number; mixed: boolean } =>
+    entry.score !== null && (requestedMix || !entry.mixed))
     .sort((a, b) => b.score - a.score).map(entry => entry.item);
 }
 

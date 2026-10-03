@@ -1,9 +1,9 @@
 import { build } from 'esbuild';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import http from 'node:http';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const staged = process.argv.includes('--staged');
@@ -36,21 +36,84 @@ if (fixtures) {
 const script = result.outputFiles[0].text + `
 (async () => {
   try {
+    await new Promise((resolveDb, rejectDb) => {
+      const request = indexedDB.open('liquid-lyrics-cache', 1);
+      request.onupgradeneeded = () => {
+        const store = request.result.createObjectStore('lyrics', { keyPath: 'key' });
+        store.createIndex('cachedAt', 'cachedAt', { unique: false });
+      };
+      request.onsuccess = () => { request.result.close(); resolveDb(); };
+      request.onerror = () => rejectDb(request.error);
+    });
     const report = { formats: LyricsTests.runChecks(), boundaries: await LyricsTests.runBoundaryChecks() };
     ${fixtureArguments}
     document.body.textContent = JSON.stringify(report);
   } catch (error) { document.body.textContent = JSON.stringify({ error: error.message }); }
 })();`;
 const page = resolve(outputDirectory, staged ? 'staged.html' : 'source.html');
-await writeFile(page, '<!doctype html><body><script>' + script.replace(/<\/script/gi, '<\\/script') + '</script></body>');
+await writeFile(page, '<!doctype html><html><head><meta charset="utf-8"></head><body><script>' + script.replace(/<\/script/gi, '<\\/script') + '</script></body></html>');
 const profile = await mkdtemp(resolve(outputDirectory, 'browser-'));
-const { stdout } = await promisify(execFile)(browser, [
-  '--headless=new', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`,
-  '--virtual-time-budget=10000', '--dump-dom', page,
-], { windowsHide: true, timeout: 30000, maxBuffer: 2 * 1024 * 1024 });
-const body = /<body>([\s\S]*?)<\/body>/.exec(stdout)?.[1];
-if (!body) throw new Error('Browser did not return test results.');
-const report = JSON.parse(body.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+const server = http.createServer(async (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(await readFile(page));
+});
+await new Promise(resolveReady => server.listen(0, '127.0.0.1', resolveReady));
+const chrome = spawn(browser, ['--headless=new', '--no-first-run', '--no-default-browser-check',
+  `--user-data-dir=${profile}`, '--remote-debugging-port=0', 'about:blank'],
+{ windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+let socket;
+let report;
+try {
+  const endpoint = await new Promise((resolveEndpoint, reject) => {
+    let output = '';
+    const timer = setTimeout(() => reject(new Error('Chrome startup timed out')), 15000);
+    chrome.once('error', error => { clearTimeout(timer); reject(error); });
+    chrome.stderr.on('data', chunk => {
+      output += chunk;
+      const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(output);
+      if (match) { clearTimeout(timer); resolveEndpoint(match[1]); }
+    });
+  });
+  socket = new WebSocket(endpoint);
+  await new Promise((resolveOpen, reject) => {
+    socket.addEventListener('open', resolveOpen, { once: true });
+    socket.addEventListener('error', reject, { once: true });
+  });
+  let id = 0;
+  const pending = new Map();
+  socket.addEventListener('message', ({ data }) => {
+    const message = JSON.parse(data);
+    if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') console.error(message.params.args);
+    const request = pending.get(message.id);
+    if (!request) return;
+    pending.delete(message.id);
+    clearTimeout(request.timer);
+    if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+    else request.resolve(message.result);
+  });
+  const send = (method, params = {}, sessionId) => new Promise((resolveRequest, reject) => {
+    const requestId = ++id;
+    const timer = setTimeout(() => { pending.delete(requestId); reject(new Error(`${method} timed out`)); }, 15000);
+    pending.set(requestId, { resolve: resolveRequest, reject, timer });
+    socket.send(JSON.stringify({ id: requestId, method, params, sessionId }));
+  });
+  const address = server.address();
+  const { targetId } = await send('Target.createTarget', { url: `http://127.0.0.1:${address.port}` });
+  const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
+  await send('Runtime.enable', {}, sessionId);
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    const evaluated = await send('Runtime.evaluate', { expression: 'document.body?.textContent', returnByValue: true }, sessionId);
+    const body = evaluated.result.value;
+    if (typeof body === 'string' && body.trim().startsWith('{')) { report = JSON.parse(body); break; }
+    await new Promise(resolveWait => setTimeout(resolveWait, 100));
+  }
+  if (!report) throw new Error('Browser did not return test results.');
+} finally {
+  socket?.close();
+  chrome.kill();
+  server.close();
+}
 await writeFile(resolve(outputDirectory, staged ? 'staged-result.json' : 'source-result.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
 if (report.error) process.exitCode = 1;
