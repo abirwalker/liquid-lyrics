@@ -21,6 +21,15 @@ declare namespace Spicetify {
     getProgress(): number;
     isPlaying(): boolean;
     seek(position: number): void;
+    togglePlay?(): void;
+    toggleShuffle?(): void;
+    toggleRepeat?(): void;
+    getShuffle?(): boolean;
+    getRepeat?(): number;
+    getVolume?(): number;
+    setVolume?(volume: number): void;
+    back?(): void;
+    next?(): void;
   }
 
   interface HistoryAPI {

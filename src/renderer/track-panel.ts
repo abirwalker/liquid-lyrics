@@ -51,6 +51,7 @@ export class TrackPanel {
   private artist = document.createElement('p');
   private album = document.createElement('span');
   private mounted = false;
+  private fullscreen = false;
   private nowPlayingState: 'visible' | 'hidden' | 'unknown' = 'unknown';
   private collapsedSidebarWidth: number | null = null;
   private frame: number | null = null;
@@ -121,6 +122,11 @@ export class TrackPanel {
     this.schedule();
   }
 
+  setFullscreen(fullscreen: boolean) {
+    this.fullscreen = fullscreen;
+    this.schedule();
+  }
+
   mount() {
     if (this.mounted) return;
     this.mounted = true;
@@ -146,16 +152,18 @@ export class TrackPanel {
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
       const { width, height } = this.overlay.getBoundingClientRect();
-      const zoom = getWindowZoom();
-      const artworkColumn = width * 0.28 * zoom;
+      const measuredZoom = getWindowZoom();
+      const zoom = this.fullscreen && (measuredZoom < 0.25 || measuredZoom > 5) ? 1 : measuredZoom;
+      const artworkColumn = this.fullscreen && width < 680 ? Math.min(120, Math.max(90, width * 0.2)) : width * 0.28 * zoom;
       const lyricWidth = width * 0.75 - artworkColumn;
       // Reserve a readable lyric column and room below the square cover for metadata.
-      const visible = this.hasArtwork && this.hasTitle && width >= 1120 && height >= 480 && lyricWidth >= 480 &&
-        this.nowPlayingState === 'hidden';
+      const visible = this.fullscreen || this.hasArtwork && this.hasTitle &&
+        width >= 1120 && height >= 480 && lyricWidth >= 480 && this.nowPlayingState === 'hidden';
       this.overlay.style.setProperty('--ll-window-zoom', `${zoom}`);
       this.overlay.style.setProperty('--ll-artwork-column-width', `${artworkColumn}px`);
       this.overlay.style.setProperty('--ll-view-height', `${height}px`);
       const coverSize = Math.min(artworkColumn, height * 0.45 * zoom);
+      this.overlay.style.setProperty('--ll-fullscreen-scale', `${this.fullscreen && width >= 680 ? Math.max(1, coverSize / 320) : 1}`);
       const referenceWidth = this.getNoCoverReferenceWidth(width);
       const referenceCoverSize = Math.min(referenceWidth * 0.28, height * 0.45) * zoom;
       this.overlay.style.setProperty('--ll-view-width', `${width}px`);
@@ -164,10 +172,18 @@ export class TrackPanel {
       this.overlay.style.setProperty('--ll-lyric-size', `${Math.max(28, referenceCoverSize * 0.115)}px`);
       this.overlay.classList.toggle('ll-with-track', visible);
       this.element.hidden = !visible;
+      if (this.fullscreen && !this.hasArtwork) {
+        this.cover.setAttribute('role', 'img');
+        this.cover.setAttribute('aria-label', 'Album artwork unavailable');
+      } else {
+        this.cover.removeAttribute('role');
+        this.cover.removeAttribute('aria-label');
+      }
     });
   }
 
   private getNoCoverReferenceWidth(width: number): number {
+    if (this.fullscreen) return width;
     const panel = document.getElementById('Desktop_PanelContainer_Id');
     if (!panel) return width;
     for (let sidebar: HTMLElement | null = panel; sidebar; sidebar = sidebar.parentElement) {

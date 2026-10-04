@@ -2,6 +2,7 @@ import { fetchLyrics } from './lyrics/chain';
 import { createLyricsController, initPlayerListener } from './player/listener';
 import { fetchSpotifySongwriters } from './player/credits';
 import { LyricsView } from './renderer/lyrics-view';
+import type { LyricsResult } from './types/types';
 
 const LIQUID_ICON = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 5 23 15" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -49,11 +50,8 @@ async function main() {
     }
   }
 
-  const toggleLyrics = () => {
-    if (lyricsView.getIsVisible() || isLyricsRoute()) {
-      closeLyrics();
-      return;
-    }
+  const openLyrics = () => {
+    if (lyricsView.getIsVisible() || isLyricsRoute()) return;
     if (history) {
       previousPath = history.location.pathname;
       openedFromButton = true;
@@ -61,6 +59,11 @@ async function main() {
     } else {
       lyricsView.mount();
     }
+  };
+
+  const toggleLyrics = () => {
+    if (lyricsView.getIsVisible() || isLyricsRoute()) closeLyrics();
+    else openLyrics();
   };
 
   const EXTRA_CONTROLS_SEL = '.main-nowPlayingBar-extraControls';
@@ -132,6 +135,19 @@ async function main() {
 
   injectButtons();
   observePlaybar();
+  const replaceFullscreen = (event: MouseEvent) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>('button[data-testid="fullscreen-mode-button"]') : null;
+    if (!button || button.disabled || !button.closest('[data-testid="now-playing-bar"], .Root__now-playing-bar')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    lyricsView.enterFullscreen(button);
+  };
+  window.addEventListener('click', replaceFullscreen, true);
+  window.addEventListener('pagehide', () => {
+    window.removeEventListener('click', replaceFullscreen, true);
+    lyricsView.unmount();
+  }, { once: true });
 
   if (!toggleElement && spicetify.Playbar?.Button) {
     try {
@@ -184,22 +200,34 @@ async function main() {
     }
   });
 
-  let trackVersion = 0;
   const controller = createLyricsController(fetchLyrics, {
-    onTrackChangeStarted: (item, query) => {
-      trackVersion++;
-      lyricsView.updateTrack(item);
-      if (query) lyricsView.setLoading();
-      else lyricsView.setLyrics(null);
-    },
     onLyricsLoaded: (result, query) => {
-      lyricsView.setLyrics(result);
       if (!result || result.instrumental || result.songwriters?.length || !query.spotifyId) return;
-      const version = trackVersion;
-      void fetchSpotifySongwriters(query.spotifyId).then(songwriters => {
-        if (version === trackVersion) lyricsView.setSongwriters(songwriters);
-      });
+      void fetchSpotifySongwriters(query.spotifyId).then(songwriters => controller.setSongwriters(query, songwriters));
     },
+  });
+
+  let displayedItem: unknown = null;
+  let displayedResult: LyricsResult | null = null;
+  controller.subscribe(state => {
+    const trackChanged = state.item !== displayedItem;
+    if (trackChanged) {
+      lyricsView.updateTrack(state.item);
+      displayedItem = state.item;
+      displayedResult = null;
+    }
+    if (state.status === 'loading') {
+      lyricsView.setLoading();
+      displayedResult = null;
+    } else if (state.status === 'ready' && state.result) {
+      if (displayedResult && displayedResult.lines === state.result.lines) {
+        if (state.result.songwriters) lyricsView.setSongwriters(state.result.songwriters);
+      } else lyricsView.setLyrics(state.result);
+      displayedResult = state.result;
+    } else if (state.status !== 'idle' || state.item !== null || trackChanged) {
+      lyricsView.setLyrics(null);
+      displayedResult = null;
+    }
   });
 
   initPlayerListener(controller, spicetify);
