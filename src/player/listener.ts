@@ -1,4 +1,5 @@
 import type { LyricsQuery, LyricsResult } from '../types/types';
+import { getSongwriters } from '../types/types';
 
 export function extractQuery(item: unknown): LyricsQuery | null {
   if (!item || typeof item !== 'object') return null;
@@ -75,6 +76,14 @@ export interface LyricsControllerOptions {
   onLyricsLoaded?: (result: LyricsResult | null, query: LyricsQuery) => void;
 }
 
+export interface LyricsState {
+  readonly item: unknown;
+  readonly query: LyricsQuery | null;
+  readonly status: 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
+  readonly result: LyricsResult | null;
+  readonly error: string | null;
+}
+
 export function createLyricsController(
   fetcher: (query: LyricsQuery, signal?: AbortSignal) => Promise<LyricsResult | null>,
   loggerOrOptions: LyricsLogger | LyricsControllerOptions = defaultLogger,
@@ -91,6 +100,38 @@ export function createLyricsController(
 
   let activeUri: string | null = null;
   let activeAbort: AbortController | null = null;
+  let state: LyricsState = Object.freeze({ item: null, query: null, status: 'idle', result: null, error: null });
+  const subscribers = new Set<(state: LyricsState) => void>();
+
+  function notify(subscriber: (state: LyricsState) => void) {
+    try {
+      subscriber(state);
+    } catch (error) {
+      logger.error('[Liquid Lyrics] View update failed:', error);
+    }
+  }
+
+  function publish(next: LyricsState) {
+    state = Object.freeze(next);
+    const published = state;
+    for (const subscriber of [...subscribers]) {
+      if (state !== published) break;
+      if (subscribers.has(subscriber)) notify(subscriber);
+    }
+  }
+
+  function subscribe(subscriber: (state: LyricsState) => void) {
+    subscribers.add(subscriber);
+    notify(subscriber);
+    return () => { subscribers.delete(subscriber); };
+  }
+
+  function setSongwriters(query: LyricsQuery, names: string[]) {
+    const songwriters = getSongwriters(names);
+    if (state.query !== query || !state.result || state.result.instrumental ||
+        state.result.songwriters?.length || !songwriters.length) return;
+    publish({ ...state, result: { ...state.result, songwriters } });
+  }
 
   async function onTrackChange(item: unknown) {
     const raw = item as Record<string, any> | null;
@@ -108,14 +149,14 @@ export function createLyricsController(
     activeUri = uri;
 
     const query = extractQuery(item);
+    const abort = query ? new AbortController() : null;
+    activeAbort = abort;
+    publish({ item, query, status: query ? 'loading' : 'idle', result: null, error: null });
     callbacks.onTrackChangeStarted?.(item, query);
 
-    if (!query) {
+    if (!query || !abort || abort.signal.aborted || activeAbort !== abort) {
       return;
     }
-
-    const abort = new AbortController();
-    activeAbort = abort;
 
     logger.info(`[Liquid Lyrics] Track changed: ${query.artist} - ${query.song}`);
     logger.info('[Liquid Lyrics] Fetching lyrics for:', {
@@ -148,10 +189,13 @@ export function createLyricsController(
         logger.info('[Liquid Lyrics] Lyrics data:', result);
       }
 
-      callbacks.onLyricsLoaded?.(result, query);
+      publish({ item, query, status: result ? 'ready' : 'unavailable', result, error: null });
+      if (!abort.signal.aborted) callbacks.onLyricsLoaded?.(result, query);
     } catch (error: any) {
       if (!abort.signal.aborted) {
         logger.error(`[Liquid Lyrics] Error fetching lyrics for "${query.song}":`, error?.message ?? error);
+        publish({ item, query, status: 'error', result: null,
+          error: error instanceof Error ? error.message : String(error) });
         callbacks.onLyricsLoaded?.(null, query);
       }
     } finally {
@@ -167,12 +211,17 @@ export function createLyricsController(
       activeAbort = null;
     }
     activeUri = null;
+    publish({ item: null, query: null, status: 'idle', result: null, error: null });
+    subscribers.clear();
   }
 
   return {
     onTrackChange,
     destroy,
     getActiveUri: () => activeUri,
+    getState: () => state,
+    subscribe,
+    setSongwriters,
   };
 }
 

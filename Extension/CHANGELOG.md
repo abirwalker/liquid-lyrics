@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0] - 2026-10-05
+
+- Open Liquid Lyrics from Spotify's full-screen button with artwork always visible and playback controls beneath the cover.
+- Add play/pause, previous/next, shuffle, repeat, seeking, volume and mute controls that scale with the artwork.
+- Restore the previous main view when leaving full-screen, including Escape and browser full-screen exit.
+- Share one lyrics-loading controller across views without starting another provider lookup when entering full-screen.
+- Archive the 1.0.x and 1.1.x builds under Extension/Build/old; existing GitHub release assets remain available.
+
 ## [1.1.7] - 2026-10-03
 
 - Match featured artists across title and artist credits while keeping solo, collaboration and remix recordings distinct.

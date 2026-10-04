@@ -5,6 +5,7 @@ import type { LyricsResult } from '../types/types';
 import { convertToAmllLines, type DisplayLyricLine } from './adapter';
 import { getSongwriters, isRecord } from '../types/types';
 import { TrackPanel } from './track-panel';
+import { FullscreenControls } from './fullscreen-controls';
 
 const PROVIDER_CREDITS = new Map([
   ['binilyrics', 'BiniLyrics · Binimum'],
@@ -18,13 +19,20 @@ const LYRIC_ALIGN_POSITION = 0.35;
 const CREDITS_END_POSITION = 0.7;
 
 class CreditsLyricPlayer extends DomLyricPlayer {
+  private readingPosition = LYRIC_ALIGN_POSITION;
+
+  public setReadingPosition(position: number) {
+    this.readingPosition = position;
+    this.setAlignPosition(position);
+  }
+
   constructor() {
     super();
     this.resizeObserver.observe(this.getBottomLineElement());
   }
 
   public override calcLayout(sync = false, force = false): Promise<void> {
-    this.layoutState.alignPosition = LYRIC_ALIGN_POSITION;
+    this.layoutState.alignPosition = this.readingPosition;
     const height = this.size[1];
     const footerHeight = this.bottomLine.lineSize[1];
     if (!height || !footerHeight || !this.getBottomLineElement().childElementCount) return super.calcLayout(sync, force);
@@ -34,7 +42,7 @@ class CreditsLyricPlayer extends DomLyricPlayer {
     const groupHeight = (group: typeof groups[number]) => this.lyricGroupSize.get(group)?.[1] ?? height / 5;
     const targetHeight = groups[index] ? groupHeight(groups[index]) : footerHeight;
     const remainingHeight = groups.slice(index).reduce((total, group) => total + groupHeight(group), 0);
-    let unscrolledBottom = height * LYRIC_ALIGN_POSITION - targetHeight / 2 + remainingHeight + footerHeight;
+    let unscrolledBottom = height * this.readingPosition - targetHeight / 2 + remainingHeight + footerHeight;
     // Interior interlude dots cancel out in AMLL's footer position; intro dots add height.
     const introEnd = (groups[0]?.startTime ?? 0) - 250;
     const time = this.timelineState.currentTime + 20;
@@ -55,9 +63,15 @@ class CreditsLyricPlayer extends DomLyricPlayer {
 
 export class LyricsView {
   private overlay: HTMLElement;
+  private fullscreen = false;
+  private returnToMain = false;
+  private fullscreenControls: FullscreenControls | null = null;
+  private fullscreenTrigger: HTMLElement | null = null;
+  private rootOverflow = '';
+  private bodyOverflow = '';
   private statusEl: HTMLElement;
   private plainLyrics: HTMLElement;
-  private player: DomLyricPlayer;
+  private player: CreditsLyricPlayer;
   private trackPanel: TrackPanel;
   private background: MeshGradientRenderer | null = null;
   private artworkUrl = '';
@@ -102,7 +116,7 @@ export class LyricsView {
     this.applyMotionPreference();
     this.player.setWordFadeWidth(0.5);
     this.player.setLinePosYSpringParams({ mass: 1.3 });
-    this.player.setAlignPosition(LYRIC_ALIGN_POSITION);
+    this.player.setReadingPosition(LYRIC_ALIGN_POSITION);
     this.player.setOptimizeOptions({ tryAdvanceStartTime: false });
 
     const playerElement = this.player.getElement();
@@ -142,7 +156,19 @@ export class LyricsView {
     lyricStage.appendChild(this.statusEl);
 
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && this.requestedOpen) this.callbacks.onClose();
+      if (this.fullscreen && event.key === 'Tab') {
+        const focusable = [...this.overlay.querySelectorAll<HTMLElement>('button, a[href], input, [tabindex="0"]')]
+          .filter(element => element.getClientRects().length && !element.matches(':disabled'));
+        const index = focusable.indexOf(document.activeElement as HTMLElement);
+        if (focusable.length && (index < 0 || event.shiftKey && index === 0 || !event.shiftKey && index === focusable.length - 1)) {
+          event.preventDefault();
+          focusable[event.shiftKey ? focusable.length - 1 : 0].focus();
+        }
+      }
+      if (event.key === 'Escape' && this.requestedOpen) {
+        if (this.fullscreen) this.exitFullscreen();
+        else this.callbacks.onClose();
+      }
     });
     this.reducedMotion.addEventListener('change', () => this.applyMotionPreference());
   }
@@ -339,6 +365,74 @@ export class LyricsView {
     return null;
   }
 
+  public enterFullscreen(trigger?: HTMLElement) {
+    if (this.fullscreen) return;
+    if (document.fullscreenElement && document.fullscreenElement !== this.overlay) {
+      globalThis.Spicetify?.showNotification('Exit the current full-screen view first.', true);
+      return;
+    }
+    if (!this.isOpen && !this.getPageRoot()) {
+      globalThis.Spicetify?.showNotification('Could not open full screen. Try again when Spotify finishes loading.', true);
+      return;
+    }
+    this.returnToMain = this.isOpen;
+    this.mount();
+    if (!this.isOpen) return;
+    this.fullscreen = true;
+    this.rootOverflow = document.documentElement.style.overflow;
+    this.bodyOverflow = document.body.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+    this.fullscreenTrigger = trigger ?? null;
+    this.overlay.classList.add('ll-fullscreen');
+    this.overlay.setAttribute('role', 'dialog');
+    this.overlay.setAttribute('aria-modal', 'true');
+    this.overlay.setAttribute('aria-label', 'Liquid Lyrics full screen');
+    document.body.append(this.overlay);
+    this.trackPanel.setFullscreen(true);
+    this.fullscreenControls = new FullscreenControls(() => this.exitFullscreen());
+    this.trackPanel.element.append(this.fullscreenControls.element);
+    this.overlay.append(this.fullscreenControls.exitButton, this.fullscreenControls.volume);
+    this.player.setReadingPosition(0.22);
+    this.fullscreenControls.update();
+    document.addEventListener('fullscreenchange', this.onFullscreenChange);
+    this.fullscreenControls.exitButton.focus();
+    void this.player.calcLayout(true, true);
+    // A blocked browser API still leaves a usable full-window lyrics view.
+    if (this.overlay.requestFullscreen) void this.overlay.requestFullscreen().then(() => {
+      if (!this.fullscreen && document.fullscreenElement === this.overlay) void document.exitFullscreen();
+    }).catch(error => console.info('[Liquid Lyrics] Using full-window mode:', error));
+  }
+
+  private onFullscreenChange = () => {
+    if (this.fullscreen && document.fullscreenElement !== this.overlay) this.exitFullscreen();
+  };
+
+  public exitFullscreen() {
+    if (!this.fullscreen) return;
+    this.fullscreen = false;
+    document.documentElement.style.overflow = this.rootOverflow;
+    document.body.style.overflow = this.bodyOverflow;
+    document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    if (document.fullscreenElement === this.overlay) void document.exitFullscreen().catch(error =>
+      console.warn('[Liquid Lyrics] Full-screen exit failed:', error));
+    this.fullscreenControls?.element.remove();
+    this.fullscreenControls?.exitButton.remove();
+    this.fullscreenControls?.volume.remove();
+    this.player.setReadingPosition(LYRIC_ALIGN_POSITION);
+    this.fullscreenControls = null;
+    this.overlay.classList.remove('ll-fullscreen');
+    this.overlay.removeAttribute('role');
+    this.overlay.removeAttribute('aria-modal');
+    this.overlay.removeAttribute('aria-label');
+    this.host?.prepend(this.overlay);
+    this.trackPanel.setFullscreen(false);
+    if (!this.returnToMain) this.unmount();
+    else void this.player.calcLayout(true, true);
+    this.fullscreenTrigger?.focus();
+    this.fullscreenTrigger = null;
+  }
+
   public mount() {
     this.requestedOpen = true;
     if (this.isOpen) return;
@@ -410,6 +504,10 @@ export class LyricsView {
   }
 
   public unmount() {
+    if (this.fullscreen) {
+      this.returnToMain = true;
+      this.exitFullscreen();
+    }
     this.requestedOpen = false;
     this.mountAttempts = 0;
     if (this.mountTimer !== null) clearTimeout(this.mountTimer);
@@ -475,6 +573,7 @@ export class LyricsView {
   }
 
   private onFrame = (now: number) => {
+    this.fullscreenControls?.update();
     if (!this.isOpen) {
       this.animFrameId = null;
       return;

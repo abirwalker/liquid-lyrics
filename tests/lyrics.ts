@@ -13,6 +13,7 @@ import { extractQuery } from '../src/player/listener';
 import { cleanTitle, createCleanQuery } from '../src/lyrics/cleaner';
 import { runBudgetChecks } from './request-budget';
 import { runCreditChecks } from './credits';
+import { runSharedLyricsStateChecks } from './shared-lyrics-state';
 import wakeCatalog from './wake-me-up-catalog.json';
 
 export function runIpadChecks(bini: unknown, lrc: unknown) {
@@ -1013,5 +1014,6 @@ export async function runBoundaryChecks() {
   }
   checks += (await runBudgetChecks()).checks;
   checks += (await runCreditChecks()).checks;
+  checks += (await runSharedLyricsStateChecks()).checks;
   return { checks };
 }
