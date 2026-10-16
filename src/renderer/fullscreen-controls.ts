@@ -76,6 +76,7 @@ export class FullscreenControls {
   private pendingSeek: number | null = null;
   private pendingSeekAt = 0;
   private seekPointerFocused = false;
+  private seekHeld = false;
   private muted: boolean | null = null;
   private repeatMode: number | null = null;
   private lastAudibleVolume = .5;
@@ -142,9 +143,12 @@ export class FullscreenControls {
       this.dragging = true;
       this.elapsed.textContent = time(Number(this.seek.value));
     });
-    this.seek.addEventListener('pointerdown', () => {
+    this.seek.addEventListener('pointerdown', event => {
+      if (event.isPrimary) this.seekHeld = true;
       this.seekPointerFocused = document.activeElement !== this.seek;
     });
+    this.seek.addEventListener('pointerup', () => { this.seekHeld = false; });
+    this.seek.addEventListener('pointercancel', () => { this.seekHeld = false; });
     this.seek.addEventListener('change', () => {
       const value = Number(this.seek.value);
       globalThis.Spicetify?.Player.seek(value);
@@ -226,7 +230,24 @@ export class FullscreenControls {
       }
     };
     this.volumeRange.addEventListener('pointerup', releaseVolumePointer);
-    this.volumeRange.addEventListener('pointercancel', releaseVolumePointer);
+    this.volumeRange.addEventListener('pointercancel', event => {
+      if (event.pointerId !== this.volumePointerId) return;
+      // A cancelled gesture (e.g. scroll takeover) must not change volume:
+      // drop the pending commit and collapse without applying anything.
+      clearTimeout(this.volumeCommitTimer);
+      const pointerId = this.volumePointerId;
+      this.volumePointerId = null;
+      if (pointerId !== null && this.volumeRange.hasPointerCapture(pointerId)) {
+        this.volumeRange.releasePointerCapture(pointerId);
+      }
+      if (this.volumePointerFocused && document.activeElement === this.volumeRange) {
+        this.volumeRange.blur();
+      }
+      this.volumePointerFocused = false;
+      this.volumePointerReleased = false;
+      this.volumePointerCommitted = false;
+      this.volume.classList.remove('ll-volume-active');
+    });
     this.volume.append(this.muteBtn, this.volumeRange, speakerMax);
     this.volume.hidden = !player?.setVolume || !player?.getVolume;
 
@@ -298,7 +319,9 @@ export class FullscreenControls {
     if (this.pendingSeek !== null && (Math.abs(progress - this.pendingSeek) <= 750 ||
         performance.now() - this.pendingSeekAt > 500)) {
       this.pendingSeek = null;
-      this.dragging = false;
+      // A resolving latch must not yank the knob from active fingers when a
+      // new drag starts inside the catch-up window.
+      if (!this.seekHeld) this.dragging = false;
     }
     if (this.pendingSeek === null && !this.dragging) {
       this.seek.value = String(Number.isFinite(progress) ? Math.max(0, progress) : 0);

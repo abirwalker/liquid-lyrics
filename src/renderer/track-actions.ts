@@ -54,8 +54,8 @@ export class TrackActions {
       const items = [...this.menu.querySelectorAll<HTMLButtonElement>('button')];
       const index = items.indexOf(document.activeElement as HTMLButtonElement);
       let next = index;
-      if (event.key === 'ArrowDown') next = (index + 1) % items.length;
-      else if (event.key === 'ArrowUp') next = (index - 1 + items.length) % items.length;
+      if (event.key === 'ArrowDown') next = index < 0 ? 0 : (index + 1) % items.length;
+      else if (event.key === 'ArrowUp') next = index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length;
       else if (event.key === 'Home') next = 0;
       else if (event.key === 'End') next = items.length - 1;
       else return;
