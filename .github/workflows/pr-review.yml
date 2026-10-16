@@ -1,0 +1,30 @@
+name: Jules PR Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+concurrency:
+  group: jules-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+      statuses: write
+    steps:
+      - uses: sanjay3290/jules-pr-reviewer@v1
+        with:
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_instructions: |
+            Tone and style constraints (Logic-only minimalist style):
+            - No pleasantries, conversational filler, or intro text.
+            - No decorative emojis and no em dashes.
+            - No buzzwords (e.g. robust, seamless, cutting-edge).
+            - DO NOT provide code suggestions, replacement blocks, diffs, or code patches.
+            - Focus exclusively on explaining the broken logic, race conditions, state invariants, and runtime risks.
+            - Every finding MUST include a confidence score (Confidence: 1/5 to 5/5) indicating certainty that it is a real issue.
+            - Output format for each finding:
+              ### `<file>:<line>` [BLOCKING|WARN|NIT] (Confidence: X/5)
+              1-2 concise sentences detailing the flawed logic and why it fails in execution.
