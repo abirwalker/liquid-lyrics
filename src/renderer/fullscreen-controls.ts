@@ -1,4 +1,5 @@
 import './fullscreen.css';
+import { TrackActions } from './track-actions';
 
 const SYMBOLS = {
   previous: {
@@ -58,6 +59,7 @@ function time(ms: number) {
 }
 
 export class FullscreenControls {
+  readonly trackActions = new TrackActions();
   readonly element = document.createElement('div');
   readonly exitButton: HTMLButtonElement;
   readonly volume = document.createElement('div');
@@ -71,9 +73,21 @@ export class FullscreenControls {
   private readonly remaining = document.createElement('span');
   private playing: boolean | null = null;
   private dragging = false;
+  private pendingSeek: number | null = null;
+  private pendingSeekAt = 0;
+  private seekPointerFocused = false;
+  private seekHeld = false;
   private muted: boolean | null = null;
   private repeatMode: number | null = null;
   private lastAudibleVolume = .5;
+  private volumePointerId: number | null = null;
+  private volumePointerX = 0;
+  private volumePointerStartedAt = 0;
+  private volumePointerReleased = false;
+  private volumePointerCommitted = false;
+  private volumePointerFocused = false;
+  private volumeCommitTimer: ReturnType<typeof setTimeout> | undefined;
+  private volumeCollapseTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(exit: () => void) {
     this.element.className = 'll-fullscreen-controls';
@@ -100,6 +114,7 @@ export class FullscreenControls {
     next.hidden = !player?.next;
     this.play = button('Play', 'play', () => globalThis.Spicetify?.Player.togglePlay?.());
     this.play.className = 'll-fullscreen-play';
+    this.play.innerHTML = `<span class="ll-transport-play-icon">${makeIcon('play')}</span><span class="ll-transport-pause-icon">${makeIcon('pause')}</span>`;
     this.play.hidden = !player?.togglePlay;
     this.shuffle = button('Shuffle', 'shuffle', () => globalThis.Spicetify?.Player.toggleShuffle?.());
     this.repeat = button('Repeat', 'repeat', () => globalThis.Spicetify?.Player.toggleRepeat?.());
@@ -113,27 +128,49 @@ export class FullscreenControls {
     timeline.className = 'll-fullscreen-timeline';
     this.seek.type = 'range';
     this.seek.min = '0';
-    this.seek.step = '1000';
+    this.seek.step = '1';
     this.seek.setAttribute('aria-label', 'Playback position');
+    this.seek.addEventListener('keydown', event => {
+      const direction = ['ArrowRight', 'ArrowUp'].includes(event.key) ? 1 :
+        ['ArrowLeft', 'ArrowDown'].includes(event.key) ? -1 : 0;
+      if (!direction || this.seek.disabled) return;
+      event.preventDefault();
+      this.seek.value = String(Math.max(0, Math.min(Number(this.seek.max), Number(this.seek.value) + direction * 1000)));
+      this.seek.dispatchEvent(new Event('input'));
+      this.seek.dispatchEvent(new Event('change'));
+    });
     this.seek.addEventListener('input', () => {
       this.dragging = true;
       this.elapsed.textContent = time(Number(this.seek.value));
     });
+    this.seek.addEventListener('pointerdown', event => {
+      if (event.isPrimary) this.seekHeld = true;
+      this.seekPointerFocused = document.activeElement !== this.seek;
+    });
+    this.seek.addEventListener('pointerup', () => { this.seekHeld = false; });
+    this.seek.addEventListener('pointercancel', () => { this.seekHeld = false; });
     this.seek.addEventListener('change', () => {
-      globalThis.Spicetify?.Player.seek(Number(this.seek.value));
-      this.dragging = false;
+      const value = Number(this.seek.value);
+      globalThis.Spicetify?.Player.seek(value);
+      // Hold the dropped position until Spotify's progress catches up.
+      this.pendingSeek = value;
+      this.pendingSeekAt = performance.now();
+      if (this.seekPointerFocused && document.activeElement === this.seek) {
+        this.seek.blur();
+      }
+      this.seekPointerFocused = false;
     });
     this.seek.addEventListener('blur', () => { this.dragging = false; });
 
     timeline.append(this.seek, this.elapsed, this.remaining);
-    this.element.append(timeline, transport);
+    this.element.append(timeline, transport, this.trackActions.element);
 
     this.volume.className = 'll-fullscreen-volume ll-fullscreen-top-right-capsule';
     this.muteBtn = document.createElement('button');
     this.muteBtn.type = 'button';
     this.muteBtn.className = 'll-fullscreen-mute-btn';
     this.muteBtn.setAttribute('aria-label', 'Mute');
-    this.muteBtn.innerHTML = makeIcon('speakerLow');
+    this.muteBtn.innerHTML = `<span class="ll-mute-audible">${makeIcon('speakerLow')}</span><span class="ll-mute-silent">${makeIcon('speakerMute')}</span>`;
     this.muteBtn.addEventListener('click', () => {
       const player = globalThis.Spicetify?.Player;
       const volume = player?.getVolume?.();
@@ -158,12 +195,100 @@ export class FullscreenControls {
       this.volumeRange.style.setProperty('--ll-volume', `${val * 100}%`);
       globalThis.Spicetify?.Player.setVolume?.(val);
     });
+    this.volumeRange.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || !event.isPrimary) return;
+      event.preventDefault();
+      clearTimeout(this.volumeCommitTimer);
+      clearTimeout(this.volumeCollapseTimer);
+      this.volumePointerId = event.pointerId;
+      this.volumePointerX = event.clientX;
+      this.volumePointerStartedAt = performance.now();
+      this.volumePointerReleased = false;
+      this.volumePointerCommitted = false;
+      this.volume.classList.add('ll-volume-active');
+      this.volumePointerFocused = document.activeElement !== this.volumeRange;
+      this.volumeRange.focus({ preventScroll: true });
+      this.volumeRange.setPointerCapture(event.pointerId);
+      this.volumeCommitTimer = setTimeout(() => {
+        this.commitVolumePointer();
+        this.volumePointerCommitted = true;
+        if (this.volumePointerReleased) this.finishVolumePointer();
+      }, 190);
+    });
+    this.volumeRange.addEventListener('pointermove', event => {
+      if (event.pointerId !== this.volumePointerId) return;
+      this.volumePointerX = event.clientX;
+      if (this.volumePointerCommitted) this.commitVolumePointer();
+    });
+    const releaseVolumePointer = (event: PointerEvent) => {
+      if (event.pointerId !== this.volumePointerId) return;
+      this.volumePointerX = event.clientX;
+      this.volumePointerReleased = true;
+      if (this.volumePointerCommitted) {
+        this.commitVolumePointer();
+        this.finishVolumePointer();
+      }
+    };
+    this.volumeRange.addEventListener('pointerup', releaseVolumePointer);
+    this.volumeRange.addEventListener('pointercancel', event => {
+      if (event.pointerId !== this.volumePointerId) return;
+      // A cancelled gesture (e.g. scroll takeover) must not change volume:
+      // drop the pending commit and collapse without applying anything.
+      clearTimeout(this.volumeCommitTimer);
+      const pointerId = this.volumePointerId;
+      this.volumePointerId = null;
+      if (pointerId !== null && this.volumeRange.hasPointerCapture(pointerId)) {
+        this.volumeRange.releasePointerCapture(pointerId);
+      }
+      if (this.volumePointerFocused && document.activeElement === this.volumeRange) {
+        this.volumeRange.blur();
+      }
+      this.volumePointerFocused = false;
+      this.volumePointerReleased = false;
+      this.volumePointerCommitted = false;
+      this.volume.classList.remove('ll-volume-active');
+    });
     this.volume.append(this.muteBtn, this.volumeRange, speakerMax);
     this.volume.hidden = !player?.setVolume || !player?.getVolume;
 
   }
 
+  dispose() {
+    clearTimeout(this.volumeCommitTimer);
+    clearTimeout(this.volumeCollapseTimer);
+    const pointerId = this.volumePointerId;
+    this.volumePointerId = null;
+    if (pointerId !== null && this.volumeRange.hasPointerCapture(pointerId)) {
+      this.volumeRange.releasePointerCapture(pointerId);
+    }
+    this.volume.classList.remove('ll-volume-active');
+    this.trackActions.dispose();
+  }
+
+  private commitVolumePointer() {
+    const bounds = this.volumeRange.getBoundingClientRect();
+    if (bounds.width <= 0) return;
+    const value = Math.max(0, Math.min(1, (this.volumePointerX - bounds.left) / bounds.width));
+    this.volumeRange.value = String(value);
+    this.volumeRange.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  private finishVolumePointer() {
+    const pointerId = this.volumePointerId;
+    this.volumePointerId = null;
+    if (pointerId !== null && this.volumeRange.hasPointerCapture(pointerId)) {
+      this.volumeRange.releasePointerCapture(pointerId);
+    }
+    if (this.volumePointerFocused && document.activeElement === this.volumeRange) {
+      this.volumeRange.blur();
+    }
+    this.volumePointerFocused = false;
+    const remainingExpanded = Math.max(0, 260 - (performance.now() - this.volumePointerStartedAt));
+    this.volumeCollapseTimer = setTimeout(() => this.volume.classList.remove('ll-volume-active'), remainingExpanded);
+  }
+
   update() {
+    this.trackActions.update();
     const player = globalThis.Spicetify?.Player;
     const duration = player?.getDuration() ?? 0;
     const progress = player?.getProgress() ?? 0;
@@ -177,7 +302,6 @@ export class FullscreenControls {
       const muted = volume <= 0;
       if (muted !== this.muted) {
         this.muted = muted;
-        this.muteBtn.innerHTML = makeIcon(muted ? 'speakerMute' : 'speakerLow');
         this.muteBtn.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
         this.muteBtn.setAttribute('aria-pressed', String(muted));
       }
@@ -192,7 +316,14 @@ export class FullscreenControls {
     }
     this.seek.max = String(Number.isFinite(duration) ? Math.max(0, duration) : 0);
     this.seek.disabled = !Number.isFinite(duration) || duration <= 0;
-    if (!this.dragging) {
+    if (this.pendingSeek !== null && (Math.abs(progress - this.pendingSeek) <= 750 ||
+        performance.now() - this.pendingSeekAt > 500)) {
+      this.pendingSeek = null;
+      // A resolving latch must not yank the knob from active fingers when a
+      // new drag starts inside the catch-up window.
+      if (!this.seekHeld) this.dragging = false;
+    }
+    if (this.pendingSeek === null && !this.dragging) {
       this.seek.value = String(Number.isFinite(progress) ? Math.max(0, progress) : 0);
       this.elapsed.textContent = time(Number(this.seek.value));
     }
@@ -203,7 +334,7 @@ export class FullscreenControls {
     if (playing !== this.playing) {
       this.playing = playing;
       this.play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
-      this.play.innerHTML = makeIcon(playing ? 'pause' : 'play');
+      this.play.dataset.playing = String(playing);
     }
   }
 }

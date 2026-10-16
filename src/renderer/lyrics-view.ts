@@ -392,8 +392,8 @@ export class LyricsView {
     this.trackPanel.setFullscreen(true);
     this.fullscreenControls = new FullscreenControls(() => this.exitFullscreen());
     this.trackPanel.element.append(this.fullscreenControls.element);
-    this.overlay.append(this.fullscreenControls.exitButton, this.fullscreenControls.volume);
-    this.player.setReadingPosition(0.22);
+    this.overlay.append(this.fullscreenControls.exitButton, this.fullscreenControls.volume, this.fullscreenControls.trackActions.feedback);
+    this.player.setReadingPosition(LYRIC_ALIGN_POSITION);
     this.fullscreenControls.update();
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
     this.fullscreenControls.exitButton.focus();
@@ -416,6 +416,7 @@ export class LyricsView {
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     if (document.fullscreenElement === this.overlay) void document.exitFullscreen().catch(error =>
       console.warn('[Liquid Lyrics] Full-screen exit failed:', error));
+    this.fullscreenControls?.dispose();
     this.fullscreenControls?.element.remove();
     this.fullscreenControls?.exitButton.remove();
     this.fullscreenControls?.volume.remove();

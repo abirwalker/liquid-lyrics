@@ -28,6 +28,8 @@ declare namespace Spicetify {
     getRepeat?(): number;
     getVolume?(): number;
     setVolume?(volume: number): void;
+    getHeart?(): boolean;
+    toggleHeart?(): void;
     back?(): void;
     next?(): void;
   }
@@ -60,6 +62,7 @@ declare namespace Spicetify {
   }
 
   interface API {
+    SVGIcons?: Record<string, string | undefined>;
     GraphQL?: {
       Definitions?: Record<string, unknown>;
       Request?: (definition: unknown, variables: Record<string, string | number>) => Promise<unknown>;

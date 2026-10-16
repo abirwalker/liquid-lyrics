@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.1] - 2026-10-15
+
+- Add a fullscreen track menu with native Spotify wording and icons: Save to / Remove from Liked Songs with a green liked heart, Go to song, Go to artist, Go to album and Copy Song Link.
+- Make the fullscreen volume expand while pressed and collapse smoothly after release.
+- Keep the timeline knob on the dropped position until playback catches up, and ease its thick-to-thin animation over 180ms.
+
 ## [1.2.0] - 2026-10-05
 
 - Open Liquid Lyrics from Spotify's full-screen button with artwork always visible and playback controls beneath the cover.
