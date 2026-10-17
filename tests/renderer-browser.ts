@@ -4,15 +4,28 @@ import type { LyricsResult } from '../src/types/types';
 
 let progress = 12500;
 let playing = true;
+let autoAdvance = false;
+let autoAdvanceStart = 0;
+let autoAdvanceBase = 0;
 const seeks: number[] = [];
 const visibility: boolean[] = [];
 globalThis.Spicetify = {
   Player: {
     data: {},
-    getProgress: () => progress,
+    getProgress: () => {
+      if (autoAdvance && playing) {
+        return Math.round(autoAdvanceBase + (performance.now() - autoAdvanceStart));
+      }
+      return progress;
+    },
     getDuration: () => 60000,
     isPlaying: () => playing,
-    seek: (time) => { seeks.push(time); progress = time; },
+    seek: (time) => {
+      seeks.push(time);
+      progress = time;
+      autoAdvanceBase = time;
+      autoAdvanceStart = performance.now();
+    },
     addEventListener: () => {},
     removeEventListener: () => {},
   },
@@ -187,7 +200,8 @@ Object.assign(window, { fixture: {
   view, fixture, spotifyInterludeFixture, backgroundFixture, overlappingTaggedBackingFixture, bracketFixture, sunflowerFixture, standaloneBackingFixture,
   forwardBackingFixture, rockabyeShapeFixture, pausedBackingFixture,
   measure, seeks, visibility,
-  setProgress: (time: number) => { progress = time; },
+  setProgress: (time: number) => { progress = time; autoAdvanceBase = time; autoAdvanceStart = performance.now(); },
+  setAutoAdvance: (enabled: boolean) => { autoAdvance = enabled; autoAdvanceBase = progress; autoAdvanceStart = performance.now(); },
   setPlaying: (state: boolean) => { playing = state; },
   resize: (height: number) => { document.querySelector<HTMLElement>('.main-view-container')!.style.height = `${height}px`; },
   artwork: () => {

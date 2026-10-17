@@ -1,4 +1,4 @@
-import { DomLyricPlayer, MeshGradientRenderer, LyricLineMouseEvent, type LyricLine } from '@applemusic-like-lyrics/core';
+import { DomLyricPlayer, MeshGradientRenderer, LyricLineMouseEvent, LayoutReason, type LyricLine } from '@applemusic-like-lyrics/core';
 import '@applemusic-like-lyrics/core/style.css';
 import './styles.css';
 import type { LyricsResult } from '../types/types';
@@ -19,45 +19,59 @@ const LYRIC_ALIGN_POSITION = 0.35;
 const CREDITS_END_POSITION = 0.7;
 
 class CreditsLyricPlayer extends DomLyricPlayer {
-  private readingPosition = LYRIC_ALIGN_POSITION;
-
   public setReadingPosition(position: number) {
-    this.readingPosition = position;
     this.setAlignPosition(position);
   }
 
   constructor() {
     super();
-    this.resizeObserver.observe(this.getBottomLineElement());
-  }
+    const layoutCalc = (this as any).layoutCalculator;
+    if (layoutCalc && layoutCalc.beginFrame) {
+      const originalBeginFrame = layoutCalc.beginFrame.bind(layoutCalc);
+      layoutCalc.beginFrame = (ctx: any, config: any) => {
+        const res = originalBeginFrame(ctx, config);
+        const height = ctx.containerHeight || this.size[1];
+        const footer = this.getBottomLineElement().firstElementChild as HTMLElement | null;
+        const bottomLineWrapper = (this as any).bottomLine?.getElement() as HTMLElement | undefined;
+        const footerHeight = (this as any).bottomLine?.lineSize?.[1] || 0;
+        if (!height || !footerHeight || !this.getBottomLineElement().childElementCount || !res.session.isValid) {
+          return res;
+        }
 
-  public override calcLayout(sync = false, force = false): Promise<void> {
-    this.layoutState.alignPosition = this.readingPosition;
-    const height = this.size[1];
-    const footerHeight = this.bottomLine.lineSize[1];
-    if (!height || !footerHeight || !this.getBottomLineElement().childElementCount) return super.calcLayout(sync, force);
+        const footerBottomOffset = (footer && bottomLineWrapper)
+          ? (footer.getBoundingClientRect().bottom - bottomLineWrapper.getBoundingClientRect().top)
+          : footerHeight;
 
-    const groups = this.currentLyricGroups;
-    const index = Math.min(this.timelineState.scrollToIndex, groups.length);
-    const groupHeight = (group: typeof groups[number]) => this.lyricGroupSize.get(group)?.[1] ?? height / 5;
-    const targetHeight = groups[index] ? groupHeight(groups[index]) : footerHeight;
-    const remainingHeight = groups.slice(index).reduce((total, group) => total + groupHeight(group), 0);
-    let unscrolledBottom = height * this.readingPosition - targetHeight / 2 + remainingHeight + footerHeight;
-    // Interior interlude dots cancel out in AMLL's footer position; intro dots add height.
-    const introEnd = (groups[0]?.startTime ?? 0) - 250;
-    const time = this.timelineState.currentTime + 20;
-    if (index === 0 && introEnd >= 4000 && time > 0 && time < introEnd) {
-      unscrolledBottom += this.layoutState.interludeDotsSize[1] + (this.baseFontSize || 24) * 0.8;
+        const { focalTopY, anchorOffset, interludeTotalHeight, activeInterludeAnchor, containerHeight, alignPosition } = res.session;
+        let totalContentHeight = layoutCalc.totalLyricHeight;
+        if (activeInterludeAnchor !== void 0) totalContentHeight += interludeTotalHeight;
+        const unscrolledBottom = containerHeight * alignPosition - anchorOffset - focalTopY + totalContentHeight + footerBottomOffset;
+        const endPosition = containerHeight * CREDITS_END_POSITION;
+
+        if (unscrolledBottom <= endPosition) {
+          const shift = endPosition - unscrolledBottom;
+          res.session.alignPosition += shift / containerHeight;
+          res.bounds.max = 0;
+        } else {
+          res.bounds.max = Math.max(0, unscrolledBottom - endPosition);
+        }
+        return res;
+      };
     }
-    const endPosition = height * CREDITS_END_POSITION;
-    const shift = Math.max(0, endPosition - unscrolledBottom);
-    const maxOffset = Math.max(0, unscrolledBottom - endPosition);
-    this.layoutState.alignPosition += shift / height;
-    this.scrollState.scrollOffset = Math.min(this.scrollState.scrollOffset, maxOffset);
-    // Give springs only the final layout, including each row's animation delay.
-    const layout = super.calcLayout(sync, force);
-    this.scrollState.scrollBoundary.maxOffset = maxOffset;
-    return layout;
+
+    const focusCtrl = (this as any).focusController;
+    if (focusCtrl && focusCtrl.resolve) {
+      const origResolve = focusCtrl.resolve.bind(focusCtrl);
+      focusCtrl.resolve = (snapshot: any, lineCount: number, flags: any) => {
+        const target = origResolve(snapshot, lineCount, flags);
+        if (!flags.isAutoAlignSuspended && flags.hasBottomContent && lineCount > 0 && !snapshot.activeInterlude) {
+          if (snapshot.scrollToIndex >= lineCount - 1 && !snapshot.playingGroups.has(lineCount - 1)) {
+            return { type: 'bottom' };
+          }
+        }
+        return target;
+      };
+    }
   }
 }
 
@@ -397,7 +411,7 @@ export class LyricsView {
     this.fullscreenControls.update();
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
     this.fullscreenControls.exitButton.focus();
-    void this.player.calcLayout(true, true);
+    this.player.calcLayout(LayoutReason.Resize);
     // A blocked browser API still leaves a usable full-window lyrics view.
     if (this.overlay.requestFullscreen) void this.overlay.requestFullscreen().then(() => {
       if (!this.fullscreen && document.fullscreenElement === this.overlay) void document.exitFullscreen();
@@ -429,7 +443,7 @@ export class LyricsView {
     this.host?.prepend(this.overlay);
     this.trackPanel.setFullscreen(false);
     if (!this.returnToMain) this.unmount();
-    else void this.player.calcLayout(true, true);
+    else this.player.calcLayout(LayoutReason.Resize);
     this.fullscreenTrigger?.focus();
     this.fullscreenTrigger = null;
   }
@@ -489,9 +503,7 @@ export class LyricsView {
       if (!this.isOpen) return;
       pageRoot.scrollTop = 0;
       this.player.setCurrentTime(this.getProgress(), true);
-      void this.player.calcLayout(true, true).catch((error: unknown) => {
-        console.warn('[Liquid Lyrics] Layout failed:', error);
-      });
+      this.player.calcLayout(LayoutReason.Resize);
     });
   }
 
