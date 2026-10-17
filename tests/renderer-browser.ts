@@ -209,7 +209,15 @@ Object.assign(window, { fixture: {
     autoAdvanceBase = progress;
     autoAdvanceStart = performance.now();
   },
-  setPlaying: (state: boolean) => { playing = state; },
+  setPlaying: (state: boolean) => {
+    if (autoAdvance && playing && !state) {
+      progress = Math.round(autoAdvanceBase + (performance.now() - autoAdvanceStart));
+    } else if (autoAdvance && !playing && state) {
+      autoAdvanceBase = progress;
+      autoAdvanceStart = performance.now();
+    }
+    playing = state;
+  },
   resize: (height: number) => { document.querySelector<HTMLElement>('.main-view-container')!.style.height = `${height}px`; },
   artwork: () => {
     const canvas = document.createElement('canvas');

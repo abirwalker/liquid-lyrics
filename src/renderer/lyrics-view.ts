@@ -31,15 +31,18 @@ class CreditsLyricPlayer extends DomLyricPlayer {
       layoutCalc.beginFrame = (ctx: any, config: any) => {
         const res = originalBeginFrame(ctx, config);
         const height = ctx.containerHeight || this.size[1];
-        const footer = this.getBottomLineElement().firstElementChild as HTMLElement | null;
         const footerHeight = (this as any).bottomLine?.lineSize?.[1] || 0;
         if (!height || !footerHeight || !this.getBottomLineElement().childElementCount || !res.session.isValid) {
           return res;
         }
 
-        const footerBottomOffset = (footer && footer.offsetHeight > 0)
-          ? (footer.offsetTop + footer.offsetHeight)
-          : footerHeight;
+        const footer = this.getBottomLineElement().firstElementChild as HTMLElement | null;
+        const bottomLineWrapper = (this as any).bottomLine?.getElement() as HTMLElement | undefined;
+        let footerBottomOffset = footerHeight;
+        if (footer && bottomLineWrapper) {
+          const offset = footer.getBoundingClientRect().bottom - bottomLineWrapper.getBoundingClientRect().top;
+          if (offset > 0) footerBottomOffset = offset;
+        }
 
         const { focalTopY, anchorOffset, interludeTotalHeight, activeInterludeAnchor, containerHeight, alignPosition } = res.session;
         let totalContentHeight = layoutCalc.totalLyricHeight;
@@ -65,7 +68,7 @@ class CreditsLyricPlayer extends DomLyricPlayer {
         const target = origResolve(snapshot, lineCount, flags);
         if (!flags.isAutoAlignSuspended && flags.hasBottomContent && lineCount > 0 && !snapshot.activeInterlude) {
           const lastStart = this.currentLyricGroups[lineCount - 1]?.startTime ?? 0;
-          if (snapshot.scrollToIndex >= lineCount - 1 && snapshot.currentTime >= lastStart && !snapshot.playingGroups.has(lineCount - 1)) {
+          if (snapshot.scrollToIndex >= lineCount - 1 && snapshot.currentTime >= lastStart && snapshot.playingGroups.size === 0) {
             const bottomTarget = { type: 'bottom' as const };
             focusCtrl.target = bottomTarget;
             return bottomTarget;

@@ -381,6 +381,7 @@ button[data-testid="lyrics-button"],
 
 #liquid-lyrics-overlay .ll-player :has(> [data-bottom-line="true"]) {
   padding-block-start: 0;
+  transition: filter .4s ease;
 }
 
 #liquid-lyrics-overlay:has(.ll-plain-lyrics:not([hidden]) .ll-credits)::after {

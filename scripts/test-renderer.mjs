@@ -354,7 +354,7 @@ try {
   })()`);
   await wait(600);
   const longFinal = await evaluate(`(() => {
-    const bottom = document.querySelector('.FmKaba_bottomLineWrapper') ?? document.querySelector('[data-bottom-line="true"]');
+    const bottom = document.querySelector('[data-bottom-line="true"]')?.parentElement ?? document.querySelector('[data-bottom-line="true"]');
     const content = document.querySelector('[data-bottom-line="true"]');
     const wrappers = [...document.querySelectorAll('.FmKaba_lyricLineWrapper')];
     return { focused: (bottom.dataset.focused ?? content?.dataset.focused) === 'true', filter: getComputedStyle(bottom).filter,
