@@ -201,7 +201,14 @@ Object.assign(window, { fixture: {
   forwardBackingFixture, rockabyeShapeFixture, pausedBackingFixture,
   measure, seeks, visibility,
   setProgress: (time: number) => { progress = time; autoAdvanceBase = time; autoAdvanceStart = performance.now(); },
-  setAutoAdvance: (enabled: boolean) => { autoAdvance = enabled; autoAdvanceBase = progress; autoAdvanceStart = performance.now(); },
+  setAutoAdvance: (enabled: boolean) => {
+    if (autoAdvance && !enabled) {
+      progress = Math.round(autoAdvanceBase + (performance.now() - autoAdvanceStart));
+    }
+    autoAdvance = enabled;
+    autoAdvanceBase = progress;
+    autoAdvanceStart = performance.now();
+  },
   setPlaying: (state: boolean) => { playing = state; },
   resize: (height: number) => { document.querySelector<HTMLElement>('.main-view-container')!.style.height = `${height}px`; },
   artwork: () => {

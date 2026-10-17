@@ -367,18 +367,19 @@ button[data-testid="lyrics-button"],
   padding: 0;
 }
 
-#liquid-lyrics-overlay .ll-player .FmKaba_bottomLineWrapper:has(.ll-credits-readable),
+#liquid-lyrics-overlay .ll-player :has(> [data-bottom-line="true"].ll-credits-readable),
 #liquid-lyrics-overlay .ll-player [data-bottom-line="true"].ll-credits-readable,
-#liquid-lyrics-overlay .ll-player:hover .FmKaba_bottomLineWrapper,
+#liquid-lyrics-overlay .ll-player:hover :has(> [data-bottom-line="true"]),
 #liquid-lyrics-overlay .ll-player:hover [data-bottom-line="true"],
-#liquid-lyrics-overlay .ll-player:focus-within .FmKaba_bottomLineWrapper,
+#liquid-lyrics-overlay .ll-player:focus-within :has(> [data-bottom-line="true"]),
 #liquid-lyrics-overlay .ll-player:focus-within [data-bottom-line="true"],
-#liquid-lyrics-overlay .ll-player [data-bottom-line="true"][data-focused="true"] {
+#liquid-lyrics-overlay .ll-player [data-focused="true"]:has(> [data-bottom-line="true"]),
+#liquid-lyrics-overlay .ll-player [data-focused="true"] [data-bottom-line="true"] {
   opacity: 1 !important;
   filter: blur(0px) !important;
 }
 
-#liquid-lyrics-overlay .ll-player .FmKaba_bottomLineWrapper {
+#liquid-lyrics-overlay .ll-player :has(> [data-bottom-line="true"]) {
   padding-block-start: 0;
 }
 

@@ -32,14 +32,13 @@ class CreditsLyricPlayer extends DomLyricPlayer {
         const res = originalBeginFrame(ctx, config);
         const height = ctx.containerHeight || this.size[1];
         const footer = this.getBottomLineElement().firstElementChild as HTMLElement | null;
-        const bottomLineWrapper = (this as any).bottomLine?.getElement() as HTMLElement | undefined;
         const footerHeight = (this as any).bottomLine?.lineSize?.[1] || 0;
         if (!height || !footerHeight || !this.getBottomLineElement().childElementCount || !res.session.isValid) {
           return res;
         }
 
-        const footerBottomOffset = (footer && bottomLineWrapper)
-          ? (footer.getBoundingClientRect().bottom - bottomLineWrapper.getBoundingClientRect().top)
+        const footerBottomOffset = (footer && footer.offsetHeight > 0)
+          ? (footer.offsetTop + footer.offsetHeight)
           : footerHeight;
 
         const { focalTopY, anchorOffset, interludeTotalHeight, activeInterludeAnchor, containerHeight, alignPosition } = res.session;
@@ -65,8 +64,11 @@ class CreditsLyricPlayer extends DomLyricPlayer {
       focusCtrl.resolve = (snapshot: any, lineCount: number, flags: any) => {
         const target = origResolve(snapshot, lineCount, flags);
         if (!flags.isAutoAlignSuspended && flags.hasBottomContent && lineCount > 0 && !snapshot.activeInterlude) {
-          if (snapshot.scrollToIndex >= lineCount - 1 && !snapshot.playingGroups.has(lineCount - 1)) {
-            return { type: 'bottom' };
+          const lastStart = this.currentLyricGroups[lineCount - 1]?.startTime ?? 0;
+          if (snapshot.scrollToIndex >= lineCount - 1 && snapshot.currentTime >= lastStart && !snapshot.playingGroups.has(lineCount - 1)) {
+            const bottomTarget = { type: 'bottom' as const };
+            focusCtrl.target = bottomTarget;
+            return bottomTarget;
           }
         }
         return target;
