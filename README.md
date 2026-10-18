@@ -7,7 +7,8 @@ A Spicetify extension that brings an Apple Music-inspired lyrics view into Spoti
 
 ![Liquid Lyrics preview](docs/preview.gif)
 
-Full-screen and Now Playing views are coming soon, with more on the way.
+Includes dedicated main view and full-screen modes with responsive artwork and integrated playback controls.
+
 ## Requirements
 
 - [Spotify desktop with Spicetify installed](https://spicetify.app/docs/getting-started)
@@ -49,6 +50,8 @@ The build creates `dist/liquid-lyrics.js`. If it hasn't already been copied into
 ## Using it
 
 The Liquid Lyrics icon takes the place of Spotify's usual lyrics button in the player controls. Click it to open the lyric view, or press `Ctrl+Alt+L` (`Cmd+Alt+L` on macOS). Press `Escape` to return to Spotify.
+
+You can also open Liquid Lyrics from Spotify's full-screen button, featuring synced lyrics alongside album artwork and integrated playback controls.
 
 ![Liquid Lyrics button in Spotify's player controls](docs/player-button.png)
 
