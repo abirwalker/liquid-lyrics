@@ -525,6 +525,12 @@
     grid-template-columns: var(--ll-artwork-column-width) minmax(0, 1fr);
     gap: 16px;
   }
+  #liquid-lyrics-overlay.ll-fullscreen.ll-with-track .ll-player {
+    inset-inline-end: 0;
+  }
+  .ll-fullscreen.ll-with-track .ll-plain-lyrics {
+    padding-inline-end: 5cqw;
+  }
   .ll-fullscreen-transport { justify-content: space-between; }
   .ll-fullscreen-transport .ll-fullscreen-play { margin: 0; }
   .ll-fullscreen-transport .ll-fullscreen-shuffle,

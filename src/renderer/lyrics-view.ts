@@ -1,4 +1,4 @@
-import { DomLyricPlayer, MeshGradientRenderer, LyricLineMouseEvent, type LyricLine } from '@applemusic-like-lyrics/core';
+import { DomLyricPlayer, MeshGradientRenderer, LyricLineMouseEvent, LayoutReason, type LyricLine } from '@applemusic-like-lyrics/core';
 import '@applemusic-like-lyrics/core/style.css';
 import './styles.css';
 import type { LyricsResult } from '../types/types';
@@ -19,45 +19,95 @@ const LYRIC_ALIGN_POSITION = 0.35;
 const CREDITS_END_POSITION = 0.7;
 
 class CreditsLyricPlayer extends DomLyricPlayer {
-  private readingPosition = LYRIC_ALIGN_POSITION;
+  private cachedFooterOffset: number | null = null;
+
+  public invalidateFooterOffset() {
+    this.cachedFooterOffset = null;
+  }
 
   public setReadingPosition(position: number) {
-    this.readingPosition = position;
+    this.invalidateFooterOffset();
     this.setAlignPosition(position);
+  }
+
+  public override calcLayout(reason: any) {
+    if (reason === LayoutReason.Resize || reason === LayoutReason.ConfigChange) {
+      this.cachedFooterOffset = null;
+    }
+    return super.calcLayout(reason);
   }
 
   constructor() {
     super();
-    this.resizeObserver.observe(this.getBottomLineElement());
-  }
+    const layoutCalc = (this as any).layoutCalculator;
+    if (layoutCalc && layoutCalc.beginFrame) {
+      const originalBeginFrame = layoutCalc.beginFrame.bind(layoutCalc);
+      layoutCalc.beginFrame = (ctx: any, config: any) => {
+        const res = originalBeginFrame(ctx, config);
+        const height = ctx.containerHeight || this.size[1];
+        const footerHeight = (this as any).bottomLine?.lineSize?.[1] || 0;
+        if (!height || !footerHeight || !(this as any).hasBottomContent || !res.session.isValid) {
+          return res;
+        }
 
-  public override calcLayout(sync = false, force = false): Promise<void> {
-    this.layoutState.alignPosition = this.readingPosition;
-    const height = this.size[1];
-    const footerHeight = this.bottomLine.lineSize[1];
-    if (!height || !footerHeight || !this.getBottomLineElement().childElementCount) return super.calcLayout(sync, force);
+        if (this.cachedFooterOffset === null) {
+          const footer = this.getBottomLineElement().firstElementChild as HTMLElement | null;
+          const bottomLineWrapper = (this as any).bottomLine?.getElement() as HTMLElement | undefined;
+          if (footer && bottomLineWrapper) {
+            const offset = footer.getBoundingClientRect().bottom - bottomLineWrapper.getBoundingClientRect().top;
+            this.cachedFooterOffset = offset > 0 ? offset : footerHeight;
+          }
+        }
+        const footerBottomOffset = this.cachedFooterOffset ?? footerHeight;
 
-    const groups = this.currentLyricGroups;
-    const index = Math.min(this.timelineState.scrollToIndex, groups.length);
-    const groupHeight = (group: typeof groups[number]) => this.lyricGroupSize.get(group)?.[1] ?? height / 5;
-    const targetHeight = groups[index] ? groupHeight(groups[index]) : footerHeight;
-    const remainingHeight = groups.slice(index).reduce((total, group) => total + groupHeight(group), 0);
-    let unscrolledBottom = height * this.readingPosition - targetHeight / 2 + remainingHeight + footerHeight;
-    // Interior interlude dots cancel out in AMLL's footer position; intro dots add height.
-    const introEnd = (groups[0]?.startTime ?? 0) - 250;
-    const time = this.timelineState.currentTime + 20;
-    if (index === 0 && introEnd >= 4000 && time > 0 && time < introEnd) {
-      unscrolledBottom += this.layoutState.interludeDotsSize[1] + (this.baseFontSize || 24) * 0.8;
+        const { focalTopY, anchorOffset, interludeTotalHeight, activeInterludeAnchor, alignPosition } = res.session;
+        const containerHeight = res.session.containerHeight || height;
+        if (containerHeight <= 0) return res;
+        let totalContentHeight = layoutCalc.totalLyricHeight;
+        if (activeInterludeAnchor !== void 0) totalContentHeight += interludeTotalHeight;
+        const unscrolledBottom = containerHeight * alignPosition - anchorOffset - focalTopY + totalContentHeight + footerBottomOffset;
+        const endPosition = containerHeight * CREDITS_END_POSITION;
+
+        if (unscrolledBottom <= endPosition) {
+          const shift = endPosition - unscrolledBottom;
+          res.session.alignPosition += shift / containerHeight;
+          res.bounds.max = 0;
+        } else {
+          res.bounds.max = Math.max(0, unscrolledBottom - endPosition);
+        }
+        return res;
+      };
     }
-    const endPosition = height * CREDITS_END_POSITION;
-    const shift = Math.max(0, endPosition - unscrolledBottom);
-    const maxOffset = Math.max(0, unscrolledBottom - endPosition);
-    this.layoutState.alignPosition += shift / height;
-    this.scrollState.scrollOffset = Math.min(this.scrollState.scrollOffset, maxOffset);
-    // Give springs only the final layout, including each row's animation delay.
-    const layout = super.calcLayout(sync, force);
-    this.scrollState.scrollBoundary.maxOffset = maxOffset;
-    return layout;
+
+    const focusCtrl = (this as any).focusController;
+    if (focusCtrl && focusCtrl.resolve) {
+      const origResolve = focusCtrl.resolve.bind(focusCtrl);
+      focusCtrl.resolve = (snapshot: any, lineCount: number, flags: any) => {
+        const target = origResolve(snapshot, lineCount, flags);
+        const groupCount = this.currentLyricGroups?.length ?? lineCount;
+        if (
+          !flags?.isAutoAlignSuspended &&
+          flags?.hasBottomContent &&
+          groupCount > 0 &&
+          !snapshot.activeInterlude &&
+          snapshot.scrollToIndex >= groupCount - 1
+        ) {
+          const lastGroup = this.currentLyricGroups[groupCount - 1];
+          const lastStart = Number(lastGroup?.startTime ?? 0);
+          const mainEnd = Number(lastGroup?.endTime ?? lastStart);
+          const bgEnd = Number((lastGroup?.bgLine as any)?.getLine?.()?.endTime ?? 0);
+          const lastEnd = Math.max(mainEnd, bgEnd);
+          const effectiveEnd = lastEnd > lastStart ? lastEnd : (lastStart + 2000);
+          const currentTime = Number(snapshot.currentTime ?? 0);
+          if (currentTime >= effectiveEnd && snapshot.playingGroups.size === 0) {
+            const bottomTarget = { type: 'bottom' as const };
+            focusCtrl.target = bottomTarget;
+            return bottomTarget;
+          }
+        }
+        return target;
+      };
+    }
   }
 }
 
@@ -239,6 +289,7 @@ export class LyricsView {
     const progress = this.getProgress();
     this.statusEl.hidden = true;
     this.player.getBottomLineElement().replaceChildren(this.makeCredits(result));
+    this.player.invalidateFooterOffset();
     this.player.resetScroll();
     this.player.setLyricLines(lines, progress);
     this.backingCues = this.player.currentLyricGroups.flatMap((group) => {
@@ -265,6 +316,7 @@ export class LyricsView {
     this.creditResult = { ...this.creditResult, songwriters };
     const footer = this.overlay.querySelector('.ll-credits');
     footer?.replaceWith(this.makeCredits(this.creditResult));
+    this.player.invalidateFooterOffset();
   }
 
   private makeCredits(result: LyricsResult): HTMLElement {
@@ -312,8 +364,22 @@ export class LyricsView {
     this.trackPanel.setArtwork(null);
     this.artworkUrl = url;
     this.artworkVersion++;
-    if (!url && this.background) this.background.getElement().dataset.ready = 'false';
+    if (!url && this.background) {
+      this.background.getElement().dataset.ready = 'false';
+      this.pruneStaleBackgroundMeshes(1);
+    }
     if (this.isOpen) this.loadArtwork();
+  }
+
+  private pruneStaleBackgroundMeshes(keepCount = 1) {
+    const bg = this.background as any;
+    if (Array.isArray(bg?.meshStates) && bg.meshStates.length > keepCount) {
+      const stale = bg.meshStates.splice(0, bg.meshStates.length - keepCount);
+      for (const state of stale) {
+        state.mesh?.dispose?.();
+        state.texture?.dispose?.();
+      }
+    }
   }
 
   private loadArtwork() {
@@ -332,8 +398,10 @@ export class LyricsView {
       // Serialize texture uploads so an old track cannot overwrite a newer one.
       this.artworkTask = this.artworkTask.then(async () => {
         if (version !== this.artworkVersion) return;
+        this.pruneStaleBackgroundMeshes(1);
         await background.setAlbum(image);
         if (version !== this.artworkVersion) return;
+        this.pruneStaleBackgroundMeshes(2);
         background.getElement().dataset.ready = 'true';
         background.resume();
         background.setStaticMode(this.reducedMotion.matches || !globalThis.Spicetify?.Player.isPlaying());
@@ -397,7 +465,7 @@ export class LyricsView {
     this.fullscreenControls.update();
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
     this.fullscreenControls.exitButton.focus();
-    void this.player.calcLayout(true, true);
+    this.player.calcLayout(LayoutReason.Resize);
     // A blocked browser API still leaves a usable full-window lyrics view.
     if (this.overlay.requestFullscreen) void this.overlay.requestFullscreen().then(() => {
       if (!this.fullscreen && document.fullscreenElement === this.overlay) void document.exitFullscreen();
@@ -429,7 +497,7 @@ export class LyricsView {
     this.host?.prepend(this.overlay);
     this.trackPanel.setFullscreen(false);
     if (!this.returnToMain) this.unmount();
-    else void this.player.calcLayout(true, true);
+    else this.player.calcLayout(LayoutReason.Resize);
     this.fullscreenTrigger?.focus();
     this.fullscreenTrigger = null;
   }
@@ -489,9 +557,7 @@ export class LyricsView {
       if (!this.isOpen) return;
       pageRoot.scrollTop = 0;
       this.player.setCurrentTime(this.getProgress(), true);
-      void this.player.calcLayout(true, true).catch((error: unknown) => {
-        console.warn('[Liquid Lyrics] Layout failed:', error);
-      });
+      this.player.calcLayout(LayoutReason.Resize);
     });
   }
 
@@ -535,6 +601,7 @@ export class LyricsView {
     this.stopLoop();
     this.player.pause();
     this.background?.pause();
+    this.pruneStaleBackgroundMeshes(1);
     this.callbacks.onVisibilityChange(false);
   }
 

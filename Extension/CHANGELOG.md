@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0] - 2026-10-18
+
+- Upgrade to AMLL Core 0.6.0 which provides up to 7x faster playback frames and 20x faster layout passes.
+- Eliminate long-session GPU memory and texture leaks in animated background by proactively pruning stale WebGL states during track transitions.
+- Pixel-align credits horizontally to lyrics at 480px with an exact 32px vertical gap matching the 0.5.2 baseline.
+- Add smooth 0.6s cubic-bezier opacity transition to 1.0 for credits with seamless outro vocals focus handoff.
+
 ## [1.2.1] - 2026-10-15
 
 - Add a fullscreen track menu with native Spotify wording and icons: Save to / Remove from Liked Songs with a green liked heart, Go to song, Go to artist, Go to album and Copy Song Link.

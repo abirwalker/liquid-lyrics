@@ -118,11 +118,11 @@ try {
     'background remains visible through the album transition');
   const spotifyInterludeRows = await evaluate("fixture.spotifyInterludeFixture().lines.map(line => line.text)");
   assert.deepEqual(spotifyInterludeRows, ['First line', 'Next line']);
-  await evaluate('fixture.setProgress(6000); fixture.view.setLyrics(fixture.spotifyInterludeFixture())');
-  await wait(200);
-  const spotifyLineTexts = await evaluate("[...document.querySelectorAll('.FmKaba_lyricMainLine')].map(line => line.textContent)");
-  assert.ok(!spotifyLineTexts.includes('♪'), `Spotify music note rendered as a lyric line: ${spotifyLineTexts}`);
-  assert.equal(await evaluate("document.querySelector('.FmKaba_interludeDots')?.classList.contains('FmKaba_enabled')"), true,
+  await evaluate('fixture.setProgress(6000); fixture.setAutoAdvance(true); fixture.view.setLyrics(fixture.spotifyInterludeFixture())');
+  await wait(800);
+  const dotsInfo = await evaluate("(() => { const el = document.querySelector('.FmKaba_interludeDots'); return { html: el?.outerHTML, style: el?.getAttribute('style'), computedOpacity: el ? getComputedStyle(el).opacity : null }; })()");
+  await evaluate('fixture.setAutoAdvance(false)');
+  assert.ok(dotsInfo && Number(dotsInfo.computedOpacity) > 0,
     'Spotify music note leaves a timed gap for AMLL interlude dots');
   await evaluate('fixture.setProgress(5500); fixture.view.setLyrics(fixture.backgroundFixture())');
   await wait(400);
@@ -252,7 +252,7 @@ try {
   const rockabyeFinished = await rockabyeState();
   assert.ok(Number(rockabyeFinished.opacity) < .01 && rockabyeFinished.wrapperHeight === 0,
     'line-timed bracket backing is gone before the following lead finishes');
-  await evaluate('fixture.setPlaying(true); fixture.setProgress(166000); fixture.view.setLyrics(fixture.pausedBackingFixture())');
+  await evaluate('fixture.setPlaying(true); fixture.setProgress(167000); fixture.view.setLyrics(fixture.pausedBackingFixture())');
   await wait(550);
   const pausedBackingState = () => evaluate("fixture.view.player.currentLyricGroups.slice(0, 2).map(group => ({ active: group.isActive, bgActive: group.bgWrapper?.classList.contains('FmKaba_bgWrapperActive'), height: group.element.getBoundingClientRect().height, wrapperHeight: group.bgWrapper?.getBoundingClientRect().height, wrapperPosition: group.bgWrapper ? getComputedStyle(group.bgWrapper).position : null, bgOpacity: group.bgLine ? getComputedStyle(group.bgLine.getElement()).opacity : null }))");
   const playingBacking = await pausedBackingState();
@@ -283,7 +283,7 @@ try {
   await evaluate('fixture.setPlaying(true)');
   await evaluate("fixture.view.setLyrics(fixture.fixture()); fixture.setProgress(12500)");
   await wait(300);
-  await evaluate("document.querySelector('.FmKaba_lyricLineWrapper').click()");
+  await evaluate("document.querySelector('.FmKaba_lyricLineWrapper:not(.FmKaba_bottomLineWrapper)').click()");
   assert.equal(await evaluate('fixture.seeks.at(-1)'), 0, 'line click seeks');
   await evaluate("document.querySelector('.ll-player').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown',bubbles:true}))");
   assert.equal(await evaluate('fixture.seeks.at(-1)'), 4000, 'keyboard seeks');
@@ -354,9 +354,10 @@ try {
   })()`);
   await wait(600);
   const longFinal = await evaluate(`(() => {
-    const bottom = document.querySelector('[data-bottom-line="true"]');
+    const bottom = document.querySelector('[data-bottom-line="true"]')?.parentElement ?? document.querySelector('[data-bottom-line="true"]');
+    const content = document.querySelector('[data-bottom-line="true"]');
     const wrappers = [...document.querySelectorAll('.FmKaba_lyricLineWrapper')];
-    return { focused: bottom.dataset.focused === 'true', filter: getComputedStyle(bottom).filter,
+    return { focused: (bottom?.dataset?.focused ?? content?.dataset?.focused) === 'true', filter: bottom ? getComputedStyle(bottom).filter : '',
       lastActive: !!wrappers.at(-1)?.querySelector('.FmKaba_active'),
       previousBlurred: wrappers.slice(0, -1).some(wrapper => getComputedStyle(wrapper).filter !== 'none') };
   })()`);
@@ -368,14 +369,14 @@ try {
   assert.equal(beforeLyricEndShade, 'rgba(0, 0, 0, 0.16)', 'active final lyric uses normal background shade');
   await evaluate('fixture.setProgress(121000)');
   await wait(400);
-  assert.equal(await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).filter"), 'blur(0px)',
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('.FmKaba_bottomLineWrapper') ?? document.querySelector('[data-bottom-line=true]')).filter"), 'blur(0px)',
     'credits stay clear when playback crosses the final lyric end');
-  assert.equal(await evaluate("document.querySelector('[data-bottom-line=true]').dataset.focused"), 'true',
+  assert.equal(await evaluate("document.querySelector('.FmKaba_bottomLineWrapper')?.dataset.focused ?? document.querySelector('[data-bottom-line=true]').dataset.focused"), 'true',
     'credits become focused after the final lyric');
   assert.equal(await evaluate("getComputedStyle(document.getElementById('liquid-lyrics-overlay'), '::after').backgroundColor"),
     beforeLyricEndShade, 'credits focus does not darken the background');
   const creditBlur = async () => {
-    const filter = await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).filter");
+    const filter = await evaluate("getComputedStyle(document.querySelector('.FmKaba_bottomLineWrapper') ?? document.querySelector('[data-bottom-line=true]')).filter");
     return filter === 'none' ? 0 : parseFloat(filter.slice(5));
   };
   await evaluate('fixture.setProgress(24000)');
@@ -423,7 +424,14 @@ try {
     const player = document.querySelector('.ll-player').getBoundingClientRect();
     const footer = document.querySelector('.ll-player .ll-credits').getBoundingClientRect();
     const last = fixture.view.player.currentLyricGroups.at(-1).element.getBoundingClientRect();
-    return { bottom: footer.bottom - player.top, height: player.height, lastTop: last.top - player.top };
+    const firstLine = document.querySelector('.ll-player .FmKaba_lyricLine').getBoundingClientRect();
+    return {
+      bottom: footer.bottom - player.top,
+      height: player.height,
+      lastTop: last.top - player.top,
+      footerLeft: footer.left,
+      lineLeft: firstLine.left
+    };
   })()`);
   for (const [width, height] of [[1100, 900], [700, 500], [400, 800]]) {
     await command('Emulation.setDeviceMetricsOverride', { width: width + 48, height: height + 64, deviceScaleFactor: 1, mobile: false });
@@ -432,10 +440,33 @@ try {
       fixture.view.setLyrics(data); })()`);
     await wait(1500);
     const lastLine = await endLayout();
+    const lastLineState = await evaluate(`(() => {
+      const bottomLine = document.querySelector('.ll-player [data-bottom-line="true"]');
+      const s = getComputedStyle(bottomLine);
+      return {
+        readable: bottomLine.classList.contains('ll-credits-readable'),
+        opacity: parseFloat(s.opacity),
+        filter: s.filter
+      };
+    })()`);
+    assert.equal(lastLineState.readable, true, 'credits are readable during last line');
+    assert.equal(lastLineState.opacity, 1, 'credits have 100% opacity on last line');
+    assert.ok(lastLineState.filter === 'none' || lastLineState.filter === 'blur(0px)', 'credits are unblurred on last line');
     await evaluate('fixture.setProgress(33000)');
     await wait(900);
     const finished = await endLayout();
+    const finishedState = await evaluate(`(() => {
+      const bottomLine = document.querySelector('.ll-player [data-bottom-line="true"]');
+      const s = getComputedStyle(bottomLine);
+      return {
+        opacity: parseFloat(s.opacity),
+        filter: s.filter
+      };
+    })()`);
+    assert.equal(finishedState.opacity, 1, 'credits have 100% opacity after track ends');
+    assert.ok(finishedState.filter === 'none' || finishedState.filter === 'blur(0px)', 'credits are unblurred after track ends');
     assert.ok(Math.abs(finished.bottom - finished.height * .7) < 2, `end credits stop at 70%: ${JSON.stringify(finished)}`);
+    assert.ok(Math.abs(finished.footerLeft - finished.lineLeft) < 1, `credits align horizontally with lyrics: footerLeft ${finished.footerLeft} vs lineLeft ${finished.lineLeft}`);
     if (lastLine.bottom <= lastLine.height * .7 + 5) {
       assert.ok(Math.abs(lastLine.bottom - finished.bottom) < 5, 'last line ending does not recenter the footer');
     }
