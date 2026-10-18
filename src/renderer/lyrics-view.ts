@@ -364,8 +364,22 @@ export class LyricsView {
     this.trackPanel.setArtwork(null);
     this.artworkUrl = url;
     this.artworkVersion++;
-    if (!url && this.background) this.background.getElement().dataset.ready = 'false';
+    if (!url && this.background) {
+      this.background.getElement().dataset.ready = 'false';
+      this.pruneStaleBackgroundMeshes(1);
+    }
     if (this.isOpen) this.loadArtwork();
+  }
+
+  private pruneStaleBackgroundMeshes(keepCount = 1) {
+    const bg = this.background as any;
+    if (Array.isArray(bg?.meshStates) && bg.meshStates.length > keepCount) {
+      const stale = bg.meshStates.splice(0, bg.meshStates.length - keepCount);
+      for (const state of stale) {
+        state.mesh?.dispose?.();
+        state.texture?.dispose?.();
+      }
+    }
   }
 
   private loadArtwork() {
@@ -384,8 +398,10 @@ export class LyricsView {
       // Serialize texture uploads so an old track cannot overwrite a newer one.
       this.artworkTask = this.artworkTask.then(async () => {
         if (version !== this.artworkVersion) return;
+        this.pruneStaleBackgroundMeshes(1);
         await background.setAlbum(image);
         if (version !== this.artworkVersion) return;
+        this.pruneStaleBackgroundMeshes(2);
         background.getElement().dataset.ready = 'true';
         background.resume();
         background.setStaticMode(this.reducedMotion.matches || !globalThis.Spicetify?.Player.isPlaying());
@@ -585,6 +601,7 @@ export class LyricsView {
     this.stopLoop();
     this.player.pause();
     this.background?.pause();
+    this.pruneStaleBackgroundMeshes(1);
     this.callbacks.onVisibilityChange(false);
   }
 
