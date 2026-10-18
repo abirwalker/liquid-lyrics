@@ -55,7 +55,7 @@ class CreditsLyricPlayer extends DomLyricPlayer {
           const bottomLineWrapper = (this as any).bottomLine?.getElement() as HTMLElement | undefined;
           if (footer && bottomLineWrapper) {
             const offset = footer.getBoundingClientRect().bottom - bottomLineWrapper.getBoundingClientRect().top;
-            if (offset > 0) this.cachedFooterOffset = offset;
+            this.cachedFooterOffset = offset > 0 ? offset : footerHeight;
           }
         }
         const footerBottomOffset = this.cachedFooterOffset ?? footerHeight;
@@ -85,9 +85,11 @@ class CreditsLyricPlayer extends DomLyricPlayer {
         if (!flags.isAutoAlignSuspended && flags.hasBottomContent && lineCount > 0 && !snapshot.activeInterlude) {
           const lastGroup = this.currentLyricGroups[lineCount - 1];
           const lastStart = Number(lastGroup?.startTime ?? 0);
-          const lastEnd = Number(lastGroup?.endTime ?? lastStart);
+          const mainEnd = Number(lastGroup?.endTime ?? lastStart);
+          const bgEnd = Number((lastGroup?.bgLine as any)?.getLine?.()?.endTime ?? 0);
+          const lastEnd = Math.max(mainEnd, bgEnd);
           const currentTime = Number(snapshot.currentTime ?? 0);
-          if (snapshot.scrollToIndex >= lineCount - 1 && currentTime >= Math.max(lastStart, lastEnd) && snapshot.playingGroups.size === 0) {
+          if (snapshot.scrollToIndex >= lineCount - 1 && currentTime >= lastEnd && snapshot.playingGroups.size === 0) {
             const bottomTarget = { type: 'bottom' as const };
             focusCtrl.target = bottomTarget;
             return bottomTarget;
@@ -528,7 +530,7 @@ export class LyricsView {
       this.mountFrame = null;
       if (!this.isOpen) return;
       pageRoot.scrollTop = 0;
-      this.player.setCurrentTime(this.getProgress(), false);
+      this.player.setCurrentTime(this.getProgress(), true);
       this.player.calcLayout(LayoutReason.Resize);
     });
   }
