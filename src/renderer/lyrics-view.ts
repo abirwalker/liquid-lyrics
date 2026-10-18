@@ -60,7 +60,9 @@ class CreditsLyricPlayer extends DomLyricPlayer {
         }
         const footerBottomOffset = this.cachedFooterOffset ?? footerHeight;
 
-        const { focalTopY, anchorOffset, interludeTotalHeight, activeInterludeAnchor, containerHeight, alignPosition } = res.session;
+        const { focalTopY, anchorOffset, interludeTotalHeight, activeInterludeAnchor, alignPosition } = res.session;
+        const containerHeight = res.session.containerHeight || height;
+        if (containerHeight <= 0) return res;
         let totalContentHeight = layoutCalc.totalLyricHeight;
         if (activeInterludeAnchor !== void 0) totalContentHeight += interludeTotalHeight;
         const unscrolledBottom = containerHeight * alignPosition - anchorOffset - focalTopY + totalContentHeight + footerBottomOffset;
@@ -82,14 +84,16 @@ class CreditsLyricPlayer extends DomLyricPlayer {
       const origResolve = focusCtrl.resolve.bind(focusCtrl);
       focusCtrl.resolve = (snapshot: any, lineCount: number, flags: any) => {
         const target = origResolve(snapshot, lineCount, flags);
-        if (!flags.isAutoAlignSuspended && flags.hasBottomContent && lineCount > 0 && !snapshot.activeInterlude) {
-          const lastGroup = this.currentLyricGroups[lineCount - 1];
+        const groupCount = this.currentLyricGroups?.length ?? lineCount;
+        if (!flags?.isAutoAlignSuspended && flags?.hasBottomContent && groupCount > 0 && !snapshot.activeInterlude) {
+          const lastGroup = this.currentLyricGroups[groupCount - 1];
           const lastStart = Number(lastGroup?.startTime ?? 0);
           const mainEnd = Number(lastGroup?.endTime ?? lastStart);
           const bgEnd = Number((lastGroup?.bgLine as any)?.getLine?.()?.endTime ?? 0);
           const lastEnd = Math.max(mainEnd, bgEnd);
+          const effectiveEnd = lastEnd > lastStart ? lastEnd : (lastStart + 2000);
           const currentTime = Number(snapshot.currentTime ?? 0);
-          if (snapshot.scrollToIndex >= lineCount - 1 && currentTime >= lastEnd && snapshot.playingGroups.size === 0) {
+          if (snapshot.scrollToIndex >= groupCount - 1 && currentTime >= effectiveEnd && snapshot.playingGroups.size === 0) {
             const bottomTarget = { type: 'bottom' as const };
             focusCtrl.target = bottomTarget;
             return bottomTarget;
