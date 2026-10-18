@@ -19,6 +19,6 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@applemusic-like-lyrics/core": "~0.6.0"
+    "@applemusic-like-lyrics/core": "0.6.0"
   }
 }

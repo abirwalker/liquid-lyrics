@@ -19,8 +19,22 @@ const LYRIC_ALIGN_POSITION = 0.35;
 const CREDITS_END_POSITION = 0.7;
 
 class CreditsLyricPlayer extends DomLyricPlayer {
+  private cachedFooterOffset: number | null = null;
+
+  public invalidateFooterOffset() {
+    this.cachedFooterOffset = null;
+  }
+
   public setReadingPosition(position: number) {
+    this.invalidateFooterOffset();
     this.setAlignPosition(position);
+  }
+
+  public override calcLayout(reason: any) {
+    if (reason === LayoutReason.Resize || reason === LayoutReason.ConfigChange) {
+      this.cachedFooterOffset = null;
+    }
+    return super.calcLayout(reason);
   }
 
   constructor() {
@@ -36,13 +50,15 @@ class CreditsLyricPlayer extends DomLyricPlayer {
           return res;
         }
 
-        const footer = this.getBottomLineElement().firstElementChild as HTMLElement | null;
-        const bottomLineWrapper = (this as any).bottomLine?.getElement() as HTMLElement | undefined;
-        let footerBottomOffset = footerHeight;
-        if (footer && bottomLineWrapper) {
-          const offset = footer.getBoundingClientRect().bottom - bottomLineWrapper.getBoundingClientRect().top;
-          if (offset > 0) footerBottomOffset = offset;
+        if (this.cachedFooterOffset === null) {
+          const footer = this.getBottomLineElement().firstElementChild as HTMLElement | null;
+          const bottomLineWrapper = (this as any).bottomLine?.getElement() as HTMLElement | undefined;
+          if (footer && bottomLineWrapper) {
+            const offset = footer.getBoundingClientRect().bottom - bottomLineWrapper.getBoundingClientRect().top;
+            if (offset > 0) this.cachedFooterOffset = offset;
+          }
         }
+        const footerBottomOffset = this.cachedFooterOffset ?? footerHeight;
 
         const { focalTopY, anchorOffset, interludeTotalHeight, activeInterludeAnchor, containerHeight, alignPosition } = res.session;
         let totalContentHeight = layoutCalc.totalLyricHeight;
@@ -67,8 +83,11 @@ class CreditsLyricPlayer extends DomLyricPlayer {
       focusCtrl.resolve = (snapshot: any, lineCount: number, flags: any) => {
         const target = origResolve(snapshot, lineCount, flags);
         if (!flags.isAutoAlignSuspended && flags.hasBottomContent && lineCount > 0 && !snapshot.activeInterlude) {
-          const lastStart = this.currentLyricGroups[lineCount - 1]?.startTime ?? 0;
-          if (snapshot.scrollToIndex >= lineCount - 1 && snapshot.currentTime >= lastStart && snapshot.playingGroups.size === 0) {
+          const lastGroup = this.currentLyricGroups[lineCount - 1];
+          const lastStart = Number(lastGroup?.startTime ?? 0);
+          const lastEnd = Number(lastGroup?.endTime ?? lastStart);
+          const currentTime = Number(snapshot.currentTime ?? 0);
+          if (snapshot.scrollToIndex >= lineCount - 1 && currentTime >= Math.max(lastStart, lastEnd) && snapshot.playingGroups.size === 0) {
             const bottomTarget = { type: 'bottom' as const };
             focusCtrl.target = bottomTarget;
             return bottomTarget;
@@ -258,6 +277,7 @@ export class LyricsView {
     const progress = this.getProgress();
     this.statusEl.hidden = true;
     this.player.getBottomLineElement().replaceChildren(this.makeCredits(result));
+    this.player.invalidateFooterOffset();
     this.player.resetScroll();
     this.player.setLyricLines(lines, progress);
     this.backingCues = this.player.currentLyricGroups.flatMap((group) => {
@@ -284,6 +304,7 @@ export class LyricsView {
     this.creditResult = { ...this.creditResult, songwriters };
     const footer = this.overlay.querySelector('.ll-credits');
     footer?.replaceWith(this.makeCredits(this.creditResult));
+    this.player.invalidateFooterOffset();
   }
 
   private makeCredits(result: LyricsResult): HTMLElement {
@@ -507,7 +528,7 @@ export class LyricsView {
       this.mountFrame = null;
       if (!this.isOpen) return;
       pageRoot.scrollTop = 0;
-      this.player.setCurrentTime(this.getProgress(), true);
+      this.player.setCurrentTime(this.getProgress(), false);
       this.player.calcLayout(LayoutReason.Resize);
     });
   }

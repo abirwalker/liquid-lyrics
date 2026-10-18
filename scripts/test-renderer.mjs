@@ -357,7 +357,7 @@ try {
     const bottom = document.querySelector('[data-bottom-line="true"]')?.parentElement ?? document.querySelector('[data-bottom-line="true"]');
     const content = document.querySelector('[data-bottom-line="true"]');
     const wrappers = [...document.querySelectorAll('.FmKaba_lyricLineWrapper')];
-    return { focused: (bottom.dataset.focused ?? content?.dataset.focused) === 'true', filter: getComputedStyle(bottom).filter,
+    return { focused: (bottom?.dataset?.focused ?? content?.dataset?.focused) === 'true', filter: bottom ? getComputedStyle(bottom).filter : '',
       lastActive: !!wrappers.at(-1)?.querySelector('.FmKaba_active'),
       previousBlurred: wrappers.slice(0, -1).some(wrapper => getComputedStyle(wrapper).filter !== 'none') };
   })()`);

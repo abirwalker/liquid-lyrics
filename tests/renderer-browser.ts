@@ -202,7 +202,7 @@ Object.assign(window, { fixture: {
   measure, seeks, visibility,
   setProgress: (time: number) => { progress = time; autoAdvanceBase = time; autoAdvanceStart = performance.now(); },
   setAutoAdvance: (enabled: boolean) => {
-    if (autoAdvance && !enabled) {
+    if (autoAdvance && playing && !enabled) {
       progress = Math.round(autoAdvanceBase + (performance.now() - autoAdvanceStart));
     }
     autoAdvance = enabled;
