@@ -46,7 +46,7 @@ class CreditsLyricPlayer extends DomLyricPlayer {
         const res = originalBeginFrame(ctx, config);
         const height = ctx.containerHeight || this.size[1];
         const footerHeight = (this as any).bottomLine?.lineSize?.[1] || 0;
-        if (!height || !footerHeight || !this.getBottomLineElement().childElementCount || !res.session.isValid) {
+        if (!height || !footerHeight || !(this as any).hasBottomContent || !res.session.isValid) {
           return res;
         }
 
@@ -85,7 +85,13 @@ class CreditsLyricPlayer extends DomLyricPlayer {
       focusCtrl.resolve = (snapshot: any, lineCount: number, flags: any) => {
         const target = origResolve(snapshot, lineCount, flags);
         const groupCount = this.currentLyricGroups?.length ?? lineCount;
-        if (!flags?.isAutoAlignSuspended && flags?.hasBottomContent && groupCount > 0 && !snapshot.activeInterlude) {
+        if (
+          !flags?.isAutoAlignSuspended &&
+          flags?.hasBottomContent &&
+          groupCount > 0 &&
+          !snapshot.activeInterlude &&
+          snapshot.scrollToIndex >= groupCount - 1
+        ) {
           const lastGroup = this.currentLyricGroups[groupCount - 1];
           const lastStart = Number(lastGroup?.startTime ?? 0);
           const mainEnd = Number(lastGroup?.endTime ?? lastStart);
@@ -93,7 +99,7 @@ class CreditsLyricPlayer extends DomLyricPlayer {
           const lastEnd = Math.max(mainEnd, bgEnd);
           const effectiveEnd = lastEnd > lastStart ? lastEnd : (lastStart + 2000);
           const currentTime = Number(snapshot.currentTime ?? 0);
-          if (snapshot.scrollToIndex >= groupCount - 1 && currentTime >= effectiveEnd && snapshot.playingGroups.size === 0) {
+          if (currentTime >= effectiveEnd && snapshot.playingGroups.size === 0) {
             const bottomTarget = { type: 'bottom' as const };
             focusCtrl.target = bottomTarget;
             return bottomTarget;
