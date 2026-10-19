@@ -153,6 +153,24 @@ button[data-testid="lyrics-button"],
   overflow: hidden;
 }
 
+.ll-track-cover.ll-cover-loading {
+  background: rgb(255 255 255 / 10%);
+  box-shadow: inset 0 .5px .5px rgb(255 255 255 / 16%);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  position: relative;
+  overflow: hidden;
+}
+
+.ll-track-cover.ll-cover-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 20%, rgb(255 255 255 / 12%) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: ll-skeleton-sweep 3.6s ease-in-out infinite;
+}
+
 .ll-track-cover img {
   display: block;
   width: 100%;
@@ -441,8 +459,90 @@ button[data-testid="lyrics-button"],
   pointer-events: none;
 }
 
+/* Loading skeleton: one calm shared shimmer, anchored to the stage height. */
+.ll-status-msg.ll-status-loading {
+  inset: auto;
+  top: 32%;
+  bottom: auto;
+  left: max(0px, calc((100% - 1040px) / 2));
+  right: max(0px, calc((100% - 1040px) / 2));
+  display: block;
+  padding: 0 clamp(24px, 5cqw, 64px);
+  text-align: start;
+}
+
+.ll-with-track .ll-status-msg.ll-status-loading {
+  left: 0;
+  right: calc(var(--ll-view-width) * .04);
+  padding-inline: 5cqw;
+}
+
+.ll-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ll-skeleton {
+  --ll-sk-size: var(--ll-lyric-size, 28px);
+  container-type: inline-size;
+  display: grid;
+  gap: calc(var(--ll-sk-size) * .55);
+  animation: ll-skeleton-in .4s ease-out .12s backwards;
+}
+
+.ll-with-track .ll-skeleton {
+  --ll-sk-size: var(--ll-artwork-lyric-size, 28px);
+}
+
+.ll-skeleton-line {
+  position: relative;
+  display: block;
+  height: calc(var(--ll-sk-size) * .8);
+  overflow: hidden;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 10%);
+  box-shadow: inset 0 .5px .5px rgb(255 255 255 / 16%);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.ll-skeleton-line:nth-child(1) { width: 82%; }
+.ll-skeleton-line:nth-child(2) { width: 94%; }
+.ll-skeleton-line:nth-child(3) { width: 58%; }
+.ll-skeleton-line:nth-child(4) { width: 76%; }
+.ll-skeleton-line:nth-child(5) { width: 44%; }
+
+/* Every sweep is as wide as the skeleton and runs the same keyframes, so all
+   lines share one pixel speed and phase regardless of their own width. */
+.ll-skeleton-line::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 100cqw;
+  background: linear-gradient(90deg, transparent 20%, rgb(255 255 255 / 12%) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: ll-skeleton-sweep 3.6s ease-in-out infinite;
+}
+
+@keyframes ll-skeleton-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes ll-skeleton-in {
+  from { opacity: 0; }
+}
+
 #liquid-lyrics-overlay [hidden] {
-  display: none;
+  display: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -458,4 +558,8 @@ button[data-testid="lyrics-button"],
   .ll-background {
     transition: none;
   }
+
+  .ll-skeleton { animation: none; }
+  .ll-skeleton-line::after { display: none; animation: none; }
+  .ll-track-cover.ll-cover-loading::after { display: none; animation: none; }
 }

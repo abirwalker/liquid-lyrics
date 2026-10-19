@@ -56,6 +56,7 @@ export class TrackPanel {
   private collapsedSidebarWidth: number | null = null;
   private frame: number | null = null;
   private hasArtwork = false;
+  private artworkLoading = false;
   private hasTitle = false;
   private overlay: HTMLElement;
   private resizeObserver = new ResizeObserver(() => this.schedule());
@@ -113,12 +114,15 @@ export class TrackPanel {
     this.schedule();
   }
 
-  setArtwork(image: HTMLImageElement | null) {
+  setArtwork(image: HTMLImageElement | null, loading = false) {
+    this.hasArtwork = !!image;
+    this.artworkLoading = loading;
     if (image) {
       image.alt = '';
       this.cover.replaceChildren(image);
-    } else this.cover.replaceChildren();
-    this.hasArtwork = !!image;
+    } else {
+      this.cover.replaceChildren();
+    }
     this.schedule();
   }
 
@@ -157,7 +161,7 @@ export class TrackPanel {
       const artworkColumn = this.fullscreen && width < 680 ? Math.min(120, Math.max(90, width * 0.2)) : width * 0.28 * zoom;
       const lyricWidth = width * 0.75 - artworkColumn;
       // Reserve a readable lyric column and room below the square cover for metadata.
-      const visible = this.fullscreen || this.hasArtwork && this.hasTitle &&
+      const visible = this.fullscreen || (this.hasArtwork || this.artworkLoading) && this.hasTitle &&
         width >= 1120 && height >= 480 && lyricWidth >= 480 && this.nowPlayingState === 'hidden';
       this.overlay.style.setProperty('--ll-window-zoom', `${zoom}`);
       this.overlay.style.setProperty('--ll-artwork-column-width', `${artworkColumn}px`);
@@ -172,7 +176,8 @@ export class TrackPanel {
       this.overlay.style.setProperty('--ll-lyric-size', `${Math.max(28, referenceCoverSize * 0.115)}px`);
       this.overlay.classList.toggle('ll-with-track', visible);
       this.element.hidden = !visible;
-      if (this.fullscreen && !this.hasArtwork) {
+      this.cover.classList.toggle('ll-cover-loading', this.artworkLoading && !this.hasArtwork && visible);
+      if (this.fullscreen && !this.hasArtwork && !this.artworkLoading) {
         this.cover.setAttribute('role', 'img');
         this.cover.setAttribute('aria-label', 'Album artwork unavailable');
       } else {

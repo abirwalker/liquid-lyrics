@@ -17,6 +17,7 @@ const PROVIDER_CREDITS = new Map([
 
 const LYRIC_ALIGN_POSITION = 0.35;
 const CREDITS_END_POSITION = 0.7;
+const SKELETON_LINE_COUNT = 5;
 
 class CreditsLyricPlayer extends DomLyricPlayer {
   private cachedFooterOffset: number | null = null;
@@ -288,6 +289,9 @@ export class LyricsView {
     this.player.getElement().hidden = false;
     const progress = this.getProgress();
     this.statusEl.hidden = true;
+    this.statusEl.classList.remove('ll-status-loading');
+    this.statusEl.removeAttribute('aria-busy');
+    this.statusEl.replaceChildren();
     this.player.getBottomLineElement().replaceChildren(this.makeCredits(result));
     this.player.invalidateFooterOffset();
     this.player.resetScroll();
@@ -307,7 +311,22 @@ export class LyricsView {
   }
 
   public setLoading() {
-    this.showStatus('Looking for lyrics…');
+    this.showStatus('Looking for lyrics…', true);
+  }
+
+  private makeSkeleton(message: string): Node[] {
+    const label = document.createElement('span');
+    label.className = 'll-sr-only';
+    label.textContent = message;
+    const skeleton = document.createElement('div');
+    skeleton.className = 'll-skeleton';
+    skeleton.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < SKELETON_LINE_COUNT; i++) {
+      const line = document.createElement('span');
+      line.className = 'll-skeleton-line';
+      skeleton.appendChild(line);
+    }
+    return [label, skeleton];
   }
 
   public setSongwriters(names: string[]) {
@@ -339,7 +358,7 @@ export class LyricsView {
     return footer;
   }
 
-  private showStatus(message: string) {
+  private showStatus(message: string, loading = false) {
     this.creditResult = null;
     this.finalLyricStart = null;
     this.updateCreditFocus(0);
@@ -351,7 +370,14 @@ export class LyricsView {
     this.player.setLyricLines([]);
     this.player.getBottomLineElement().replaceChildren();
     this.player.update(0);
-    this.statusEl.textContent = message;
+    this.statusEl.classList.toggle('ll-status-loading', loading);
+    if (loading) {
+      this.statusEl.setAttribute('aria-busy', 'true');
+      this.statusEl.replaceChildren(...this.makeSkeleton(message));
+    } else {
+      this.statusEl.removeAttribute('aria-busy');
+      this.statusEl.textContent = message;
+    }
     this.statusEl.hidden = false;
   }
 
@@ -361,13 +387,17 @@ export class LyricsView {
     const source = metadata.image_xlarge_url ?? metadata.image_large_url ?? metadata.image_url;
     const url = typeof source === 'string' ? source.replace(/^spotify:image:/, 'https://i.scdn.co/image/') : '';
     if (url === this.artworkUrl) return;
-    this.trackPanel.setArtwork(null);
     this.artworkUrl = url;
     this.artworkVersion++;
-    if (!url && this.background) {
-      this.background.getElement().dataset.ready = 'false';
-      this.pruneStaleBackgroundMeshes(1);
+    if (!url) {
+      this.trackPanel.setArtwork(null, false);
+      if (this.background) {
+        this.background.getElement().dataset.ready = 'false';
+        this.pruneStaleBackgroundMeshes(1);
+      }
+      return;
     }
+    this.trackPanel.setArtwork(null, true);
     if (this.isOpen) this.loadArtwork();
   }
 
@@ -415,6 +445,7 @@ export class LyricsView {
     }).catch((error: unknown) => {
       if (version !== this.artworkVersion) return;
       this.artworkRequestVersion = -1;
+      this.trackPanel.setArtwork(null, false);
       if (background) background.getElement().dataset.ready = 'false';
       console.warn('[Liquid Lyrics] Artwork unavailable:', error);
     });
