@@ -13,7 +13,7 @@
   border-radius: 0;
 }
 .ll-fullscreen .ll-layout { inset-block: 0; }
-.ll-fullscreen .ll-track-panel { position: relative; }
+.ll-fullscreen .ll-track-panel { position: relative; animation: none; }
 .ll-fullscreen .ll-track-title { padding-inline-end: calc(52px * var(--ll-fullscreen-scale, 1)); }
 .ll-track-actions {
   position: absolute;

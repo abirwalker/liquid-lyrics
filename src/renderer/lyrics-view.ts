@@ -296,6 +296,15 @@ export class LyricsView {
     this.player.invalidateFooterOffset();
     this.player.resetScroll();
     this.player.setLyricLines(lines, progress);
+    this.refreshBackingCues();
+    this.player.setCurrentTime(progress, true);
+    this.updateCreditFocus(progress);
+    this.updateTimedBacking(progress);
+    this.player.update(0);
+    this.lastPlaying = null;
+  }
+
+  private refreshBackingCues() {
     this.backingCues = this.player.currentLyricGroups.flatMap((group) => {
       const backing = group.bgLine?.getLine() as DisplayLyricLine | undefined;
       if (!backing?.words.length || !group.bgLine || !group.bgWrapper) return [];
@@ -303,11 +312,6 @@ export class LyricsView {
         startMs: backing.words[0].startTime, endMs: backing.words[backing.words.length - 1].endTime,
         inferred: backing.inferredBacking === true }];
     });
-    this.player.setCurrentTime(progress, true);
-    this.updateCreditFocus(progress);
-    this.updateTimedBacking(progress);
-    this.player.update(0);
-    this.lastPlaying = null;
   }
 
   public setLoading() {
@@ -587,8 +591,24 @@ export class LyricsView {
       this.mountFrame = null;
       if (!this.isOpen) return;
       pageRoot.scrollTop = 0;
-      this.player.setCurrentTime(this.getProgress(), true);
-      this.player.calcLayout(LayoutReason.Resize);
+      const rect = this.player.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.player.size[0] = rect.width;
+        this.player.size[1] = rect.height;
+      }
+      const progress = this.getProgress();
+      if (this.lines.length > 0) {
+        if (!this.reducedMotion.matches) {
+          this.player.rebuildLyricView(progress);
+          this.player.setLinePosYSpringParams({ mass: 1.3 });
+          this.refreshBackingCues();
+          this.updateCreditFocus(progress);
+          this.updateTimedBacking(progress);
+        } else {
+          this.player.setCurrentTime(progress, true);
+          this.player.calcLayout(LayoutReason.Resize);
+        }
+      }
     });
   }
 
