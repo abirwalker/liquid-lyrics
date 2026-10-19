@@ -21,6 +21,8 @@ const SKELETON_LINE_COUNT = 5;
 
 class CreditsLyricPlayer extends DomLyricPlayer {
   private cachedFooterOffset: number | null = null;
+  private lastContainerWidth = 0;
+  private lastContainerHeight = 0;
 
   public invalidateFooterOffset() {
     this.cachedFooterOffset = null;
@@ -32,15 +34,55 @@ class CreditsLyricPlayer extends DomLyricPlayer {
   }
 
   public override calcLayout(reason: any) {
-    if (reason === LayoutReason.Resize || reason === LayoutReason.ConfigChange) {
+    if (this.size[1] <= 0) {
+      const rect = this.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.size[0] = rect.width;
+        this.size[1] = rect.height;
+      } else {
+        return;
+      }
+    }
+    if (reason === LayoutReason.ConfigChange || this.size[0] !== this.lastContainerWidth || this.size[1] !== this.lastContainerHeight) {
+      this.lastContainerWidth = this.size[0];
+      this.lastContainerHeight = this.size[1];
       this.cachedFooterOffset = null;
     }
     return super.calcLayout(reason);
   }
 
+  public override update(delta: number) {
+    if (this.size[1] <= 0) {
+      const rect = this.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.size[0] = rect.width;
+        this.size[1] = rect.height;
+      } else {
+        return;
+      }
+    }
+    super.update(delta);
+  }
+
   constructor() {
     super();
     const layoutCalc = (this as any).layoutCalculator;
+    if (layoutCalc) {
+      if (layoutCalc.setLineHeight) {
+        const origSetLineHeight = layoutCalc.setLineHeight.bind(layoutCalc);
+        layoutCalc.setLineHeight = (index: number, height: number) => {
+          if (height <= 0) return;
+          origSetLineHeight(index, height);
+        };
+      }
+      if (layoutCalc.updateUnmeasuredHeights) {
+        const origUpdate = layoutCalc.updateUnmeasuredHeights.bind(layoutCalc);
+        layoutCalc.updateUnmeasuredHeights = (defaultHeight: number) => {
+          if (defaultHeight <= 0) return;
+          origUpdate(defaultHeight);
+        };
+      }
+    }
     if (layoutCalc && layoutCalc.beginFrame) {
       const originalBeginFrame = layoutCalc.beginFrame.bind(layoutCalc);
       layoutCalc.beginFrame = (ctx: any, config: any) => {
@@ -141,6 +183,7 @@ export class LyricsView {
   private lastProgress: number | null = null;
   private lines: LyricLine[] = [];
   private finalLyricStart: number | null = null;
+  private creditsReadable = false;
   private creditResult: LyricsResult | null = null;
   private backingCues: Array<{ element: HTMLElement; wrapper: HTMLElement; startMs: number; endMs: number; inferred: boolean }> = [];
   private isOpen = false;
@@ -203,6 +246,7 @@ export class LyricsView {
     this.statusEl = document.createElement('div');
     this.statusEl.className = 'll-status-msg';
     this.statusEl.setAttribute('role', 'status');
+    this.statusEl.setAttribute('aria-live', 'polite');
     this.statusEl.textContent = 'Play a song to see its lyrics';
     lyricStage.appendChild(this.statusEl);
 
@@ -264,6 +308,9 @@ export class LyricsView {
       this.player.getBottomLineElement().replaceChildren();
       this.player.getElement().hidden = true;
       this.statusEl.hidden = true;
+      this.statusEl.classList.remove('ll-status-loading');
+      this.statusEl.removeAttribute('aria-busy');
+      this.statusEl.replaceChildren();
       this.plainLyrics.replaceChildren(...result.lines.map((line) => {
         const paragraph = document.createElement('p');
         paragraph.textContent = line.text;
@@ -635,6 +682,11 @@ export class LyricsView {
     if (!this.isOpen) return;
     this.isOpen = false;
 
+    this.stopLoop();
+    this.player.pause();
+    this.background?.pause();
+    this.pruneStaleBackgroundMeshes(1);
+
     this.hostObserver.disconnect();
     this.trackPanel.unmount();
     this.overlay.remove();
@@ -648,11 +700,6 @@ export class LyricsView {
       this.host.scrollTop = this.savedScrollTop;
     }
     this.host = null;
-
-    this.stopLoop();
-    this.player.pause();
-    this.background?.pause();
-    this.pruneStaleBackgroundMeshes(1);
     this.callbacks.onVisibilityChange(false);
   }
 
@@ -668,20 +715,24 @@ export class LyricsView {
   }
 
   private updateCreditFocus(progress: number) {
-    this.player.getBottomLineElement().classList.toggle('ll-credits-readable',
-      this.finalLyricStart !== null && progress >= this.finalLyricStart);
+    const readable = this.finalLyricStart !== null && progress >= this.finalLyricStart;
+    if (readable !== this.creditsReadable) {
+      this.creditsReadable = readable;
+      this.player.getBottomLineElement().classList.toggle('ll-credits-readable', readable);
+    }
   }
 
   private updateTimedBacking(progress: number) {
     for (const cue of this.backingCues) {
       const finished = progress >= cue.endMs;
-      if (finished && !cue.wrapper.classList.contains('ll-backing-finished')) {
+      const isPast = progress >= cue.endMs + 450;
+      if (finished && !isPast && !cue.wrapper.classList.contains('ll-backing-finished')) {
         cue.wrapper.style.setProperty('--ll-backing-height', `${cue.wrapper.offsetHeight}px`);
       }
       cue.element.classList.toggle('ll-backing-singing', cue.inferred && progress >= cue.startMs && progress < cue.endMs);
       cue.element.classList.toggle('ll-backing-finished', finished);
       cue.wrapper.classList.toggle('ll-backing-finished', finished);
-      cue.wrapper.classList.toggle('ll-backing-past', progress >= cue.endMs + 450);
+      cue.wrapper.classList.toggle('ll-backing-past', isPast);
     }
   }
 
@@ -692,7 +743,7 @@ export class LyricsView {
   }
 
   private onFrame = (now: number) => {
-    this.fullscreenControls?.update();
+    if (this.fullscreen) this.fullscreenControls?.update();
     if (!this.isOpen) {
       this.animFrameId = null;
       return;
@@ -702,6 +753,16 @@ export class LyricsView {
     this.lastFrameTime = now;
     const spotifyPlayer = globalThis.Spicetify?.Player;
     if (spotifyPlayer) {
+      if (this.player.size[1] <= 0) {
+        const rect = this.player.getElement().getBoundingClientRect();
+        if (rect.height > 0) {
+          this.player.size[0] = rect.width;
+          this.player.size[1] = rect.height;
+        } else {
+          this.animFrameId = requestAnimationFrame(this.onFrame);
+          return;
+        }
+      }
       const playing = spotifyPlayer.isPlaying();
       if (playing !== this.lastPlaying) {
         if (playing) this.player.resume();
