@@ -297,9 +297,15 @@ button[data-testid="lyrics-button"],
   outline-offset: -2px;
 }
 
-/* AMLL 0.5.2 private selectors: keep these covered by the browser fixtures. */
+/* AMLL 0.6.0 private selectors: keep these covered by the browser fixtures. */
 #liquid-lyrics-overlay .FmKaba_lyricLineWrapper {
   padding-block: .6em;
+  will-change: transform, opacity, filter;
+}
+
+#liquid-lyrics-overlay .FmKaba_lyricLine {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
 }
 
 #liquid-lyrics-overlay .FmKaba_bgWrapper:not(.FmKaba_bgWrapperActive) {
@@ -564,6 +570,12 @@ button[data-testid="lyrics-button"],
 
 #liquid-lyrics-overlay [hidden] {
   display: none !important;
+}
+
+#liquid-lyrics-overlay .ll-player[hidden] {
+  display: block !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

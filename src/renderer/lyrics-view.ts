@@ -22,6 +22,7 @@ const SKELETON_LINE_COUNT = 5;
 class CreditsLyricPlayer extends DomLyricPlayer {
   private cachedFooterOffset: number | null = null;
   private lastContainerWidth = 0;
+  private lastBuiltWidth = 0;
   private lastContainerHeight = 0;
 
   public invalidateFooterOffset() {
@@ -44,6 +45,9 @@ class CreditsLyricPlayer extends DomLyricPlayer {
       }
     }
     if (reason === LayoutReason.ConfigChange || this.size[0] !== this.lastContainerWidth || this.size[1] !== this.lastContainerHeight) {
+      if (this.size[0] !== this.lastContainerWidth) {
+        this.lastBuiltWidth = 0;
+      }
       this.lastContainerWidth = this.size[0];
       this.lastContainerHeight = this.size[1];
       this.cachedFooterOffset = null;
@@ -62,6 +66,144 @@ class CreditsLyricPlayer extends DomLyricPlayer {
       }
     }
     super.update(delta);
+  }
+
+  public override rebuildLyricView(initialTime = this.getCurrentTime()) {
+    if (this.size[1] <= 0 && this.getElement().isConnected) {
+      const rect = this.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.size[0] = rect.width;
+        this.size[1] = rect.height;
+      }
+    }
+    super.rebuildLyricView(initialTime);
+    this.setLinePosYSpringParams({ mass: 1.3 });
+    this.lastBuiltWidth = this.getElement().isConnected ? this.size[0] : 0;
+  }
+
+  public override buildLyricGroups() {
+    super.buildLyricGroups();
+    for (const group of this.currentLyricGroups) {
+      this.decorateLyricLine(group.mainLine);
+      if (group.bgLine) this.decorateLyricLine(group.bgLine);
+      const origHide = group.hide.bind(group);
+      group.hide = () => {
+        const wasMounted = !!group.getElement().parentElement;
+        origHide();
+        if (wasMounted && !group.isActive) {
+          this.resetOffscreenLineAnimations(group.mainLine);
+          if (group.bgLine) this.resetOffscreenLineAnimations(group.bgLine);
+        }
+      };
+    }
+  }
+
+  private decorateLyricLine(line: any) {
+    if (!line || line.__llDecorated) return;
+    line.__llDecorated = true;
+    const origRebuild = line.rebuildElement.bind(line);
+    line.rebuildElement = () => {
+      line.__llMaskW = 0;
+      line.__llMaskH = 0;
+      origRebuild();
+    };
+    const origUpdateMask = line.updateMaskImageSync.bind(line);
+    line.updateMaskImageSync = () => {
+      origUpdateMask();
+      const el = line.getElement() as HTMLElement | undefined;
+      if (el) {
+        line.__llMaskW = el.clientWidth;
+        line.__llMaskH = el.clientHeight;
+      }
+    };
+    const origOnSizeChange = line.onLineSizeChange.bind(line);
+    line.onLineSizeChange = (size: [number, number]) => {
+      const el = line.getElement() as HTMLElement | undefined;
+      if (line.built && el && el.clientWidth > 0 && el.clientWidth === line.__llMaskW && el.clientHeight === line.__llMaskH) {
+        return;
+      }
+      origOnSizeChange(size);
+    };
+  }
+
+  private resetOffscreenLineAnimations(line: any) {
+    if (!line) return;
+    line.pause?.();
+    if (Array.isArray(line.splittedWords)) {
+      for (const word of line.splittedWords) {
+        if (!Array.isArray(word.elementAnimations)) continue;
+        for (const anim of word.elementAnimations) {
+          anim.pause();
+          anim.playbackRate = 1;
+          anim.currentTime = 0;
+        }
+      }
+    }
+  }
+
+  public playEntryAnimation(initialTime = this.getCurrentTime()) {
+    if (this.size[1] <= 0 && this.getElement().isConnected) {
+      const rect = this.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.size[0] = rect.width;
+        this.size[1] = rect.height;
+      }
+    }
+    if (this.size[0] <= 0 || this.size[0] !== this.lastBuiltWidth || this.currentLyricGroups.length === 0) {
+      this.rebuildLyricView(initialTime);
+      return;
+    }
+    this.resetScroll();
+    (this as any).focusController?.reset();
+    if (this.getBottomLineElement().innerHTML.trim().length > 0) {
+      (this as any).bottomLine?.resetPosition();
+    }
+    (this as any).interludeDots?.clearInterlude(true);
+    (this as any).layoutCalculator?.updateUnmeasuredHeights((this as any).defaultLineHeight);
+    (this as any).timelineController?.reset();
+    for (const group of this.currentLyricGroups) {
+      if ((group.mainLine as any).isEnabled || (group.bgLine as any)?.isEnabled) {
+        group.disable();
+      }
+    }
+    (this as any).seekDetector?.reset();
+    this.setCurrentTime(initialTime, true);
+    this.setLinePosYSpringParams({ mass: 1.3 });
+    for (const group of this.currentLyricGroups) {
+      if (group.opacity > 0) {
+        group.posY.setPosition(window.innerHeight * 2);
+        group.posY.setTargetPosition(group.top);
+      } else {
+        group.posY.setPosition(group.top);
+      }
+      (group as any).lastYNum = -9999;
+      (group as any).isUiDirty = true;
+    }
+    this.update(0);
+  }
+
+  public hasActiveAnimations(): boolean {
+    const bottomPosY = (this as any).bottomLine?.lineTransforms?.posY;
+    if (bottomPosY && !bottomPosY.arrived()) return true;
+    const dots = (this as any).interludeDots;
+    if (dots && dots.phase && dots.phase !== 'idle') return true;
+    for (const group of this.currentLyricGroups) {
+      const inRange = group.isInRenderRange();
+      if (
+        !group.posY.arrived() ||
+        !group.bgSlideY.arrived() ||
+        !group.mainLine.lineTransforms.scale.arrived() ||
+        (group.bgLine && !group.bgLine.lineTransforms.scale.arrived()) ||
+        (inRange && (
+          (group as any).isUiDirty ||
+          (group.mainLine as any).isUiDirty ||
+          (group.bgLine && (group.bgLine as any).isUiDirty)
+        ))
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   constructor() {
@@ -349,6 +491,7 @@ export class LyricsView {
     this.updateTimedBacking(progress);
     this.player.update(0);
     this.lastPlaying = null;
+    this.lastProgress = progress;
   }
 
   private refreshBackingCues() {
@@ -646,15 +789,18 @@ export class LyricsView {
       const progress = this.getProgress();
       if (this.lines.length > 0) {
         if (!this.reducedMotion.matches) {
-          this.player.rebuildLyricView(progress);
-          this.player.setLinePosYSpringParams({ mass: 1.3 });
+          this.player.playEntryAnimation(progress);
           this.refreshBackingCues();
           this.updateCreditFocus(progress);
           this.updateTimedBacking(progress);
         } else {
           this.player.setCurrentTime(progress, true);
           this.player.calcLayout(LayoutReason.Resize);
+          this.updateCreditFocus(progress);
+          this.updateTimedBacking(progress);
+          this.player.update(0);
         }
+        this.lastProgress = progress;
       }
     });
   }
@@ -771,13 +917,22 @@ export class LyricsView {
         this.background?.resume();
         this.lastPlaying = playing;
       }
+      if (this.mountFrame !== null && this.lines.length > 0) {
+        this.animFrameId = requestAnimationFrame(this.onFrame);
+        return;
+      }
       const progress = this.getProgress();
       const seeking = this.lastProgress === null || Math.abs(progress - this.lastProgress) > 1000;
-      this.player.setCurrentTime(progress, seeking);
-      this.updateCreditFocus(progress);
-      this.lastProgress = progress;
-      this.player.update(deltaMs);
-      this.updateTimedBacking(progress);
+      const progressChanged = progress !== this.lastProgress;
+      if (playing || seeking || progressChanged) {
+        this.player.setCurrentTime(progress, seeking);
+        this.updateCreditFocus(progress);
+        this.lastProgress = progress;
+      }
+      if (playing || seeking || progressChanged || this.player.hasActiveAnimations()) {
+        this.player.update(deltaMs);
+        this.updateTimedBacking(progress);
+      }
     }
     this.animFrameId = requestAnimationFrame(this.onFrame);
   };

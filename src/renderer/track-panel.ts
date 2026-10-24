@@ -70,9 +70,9 @@ export class TrackPanel {
       if (record.type === 'attributes') {
         if (!(record.target instanceof Element)) return false;
         if (record.target === panel || record.target === trigger || record.target === queue) return true;
-        if (panel !== null && panel.contains(record.target)) return true;
-        if ((record.attributeName === 'hidden' || record.attributeName === 'aria-hidden') &&
-            panel !== null && record.target.contains(panel)) return true;
+        if (panel !== null && record.target.contains(panel) &&
+            (record.attributeName === 'hidden' || record.attributeName === 'aria-hidden' ||
+             !record.target.contains(this.overlay))) return true;
         return false;
       }
       return [...record.addedNodes, ...record.removedNodes].some(node =>
