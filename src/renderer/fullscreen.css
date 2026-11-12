@@ -28,21 +28,35 @@
   place-items: center;
   width: calc(24px * var(--ll-fullscreen-scale, 1));
   height: calc(24px * var(--ll-fullscreen-scale, 1));
-  border: 0;
+  border: calc(0.5px * var(--ll-fullscreen-scale, 1)) solid rgba(255, 255, 255, 0.18);
   border-radius: 50%;
   padding: 0;
-  color: rgb(255 255 255 / 80%);
-  background: transparent;
+  color: rgb(255 255 255 / 85%);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(calc(20px * var(--ll-fullscreen-scale, 1))) saturate(180%);
+  -webkit-backdrop-filter: blur(calc(20px * var(--ll-fullscreen-scale, 1))) saturate(180%);
+  box-shadow: inset 0 calc(0.75px * var(--ll-fullscreen-scale, 1)) 0 rgba(255, 255, 255, 0.25),
+              0 calc(2px * var(--ll-fullscreen-scale, 1)) calc(8px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.15);
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition: background-color 140ms ease, color 140ms ease, transform 140ms cubic-bezier(0.2, 0, 0, 1), border-color 140ms ease, box-shadow 140ms ease;
 }
-.ll-track-actions > button:hover { background: rgb(255 255 255 / 12%); color: white; }
-.ll-track-actions > button:active { background: rgb(255 255 255 / 18%); }
+.ll-track-actions > button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: white;
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) 0 rgba(255, 255, 255, 0.35),
+              0 calc(4px * var(--ll-fullscreen-scale, 1)) calc(12px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.22);
+}
+.ll-track-actions > button:active {
+  background: rgba(255, 255, 255, 0.26);
+  transform: scale(0.92);
+  transition-duration: 70ms;
+}
 .ll-track-actions > button[aria-haspopup="menu"] {
-  transition: background-color 100ms ease, color 100ms ease, scale 140ms cubic-bezier(0.2, 0, 0, 1);
+  transition: background-color 100ms ease, color 100ms ease, transform 140ms cubic-bezier(0.2, 0, 0, 1), border-color 100ms ease, box-shadow 100ms ease;
 }
 .ll-track-actions > button[aria-haspopup="menu"]:active {
-  scale: 0.94;
+  transform: scale(0.92);
   transition-duration: 70ms;
 }
 .ll-track-actions > button svg { width: 65%; height: 65%; fill: currentColor; }
@@ -62,12 +76,14 @@
   max-width: min(320px, 80vw);
   box-sizing: border-box;
   padding: 6px;
-  border: 1px solid rgb(255 255 255 / 22%);
+  border: calc(1px * var(--ll-fullscreen-scale, 1)) solid rgba(255, 255, 255, 0.24);
   border-radius: 14px;
-  background: rgb(28 32 38 / 52%);
-  backdrop-filter: blur(32px) saturate(165%);
-  -webkit-backdrop-filter: blur(32px) saturate(165%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%), 0 16px 36px #0005;
+  background: rgba(26, 30, 36, 0.58);
+  backdrop-filter: blur(calc(36px * var(--ll-fullscreen-scale, 1))) saturate(190%) brightness(1.04);
+  -webkit-backdrop-filter: blur(calc(36px * var(--ll-fullscreen-scale, 1))) saturate(190%) brightness(1.04);
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) calc(1px * var(--ll-fullscreen-scale, 1)) 0 rgba(255, 255, 255, 0.3),
+              inset 0 calc(-0.5px * var(--ll-fullscreen-scale, 1)) calc(0.5px * var(--ll-fullscreen-scale, 1)) 0 rgba(0, 0, 0, 0.15),
+              0 calc(20px * var(--ll-fullscreen-scale, 1)) calc(48px * var(--ll-fullscreen-scale, 1)) calc(-6px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.42);
   animation: ll-track-menu-open 180ms cubic-bezier(0.2, 0, 0, 1);
 }
 @keyframes ll-track-menu-open {
@@ -88,13 +104,14 @@
   max-width: calc(100vw - 32px);
   box-sizing: border-box;
   padding: calc(10px * var(--ll-fullscreen-scale, 1)) calc(18px * var(--ll-fullscreen-scale, 1));
-  border: calc(1px * var(--ll-fullscreen-scale, 1)) solid rgb(255 255 255 / 22%);
+  border: calc(1px * var(--ll-fullscreen-scale, 1)) solid rgba(255, 255, 255, 0.25);
   border-radius: 14px;
   color: #fff;
-  background: rgb(28 32 38 / 52%);
-  backdrop-filter: blur(calc(32px * var(--ll-fullscreen-scale, 1))) saturate(165%);
-  -webkit-backdrop-filter: blur(calc(32px * var(--ll-fullscreen-scale, 1))) saturate(165%);
-  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) 0 rgb(255 255 255 / 14%), 0 calc(8px * var(--ll-fullscreen-scale, 1)) calc(24px * var(--ll-fullscreen-scale, 1)) #0003;
+  background: rgba(26, 30, 36, 0.58);
+  backdrop-filter: blur(calc(36px * var(--ll-fullscreen-scale, 1))) saturate(190%) brightness(1.04);
+  -webkit-backdrop-filter: blur(calc(36px * var(--ll-fullscreen-scale, 1))) saturate(190%) brightness(1.04);
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) calc(1px * var(--ll-fullscreen-scale, 1)) 0 rgba(255, 255, 255, 0.32),
+              0 calc(10px * var(--ll-fullscreen-scale, 1)) calc(28px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.28);
   font-family: inherit;
   font-size: calc(14px * var(--ll-fullscreen-scale, 1));
   font-weight: 500;
@@ -270,16 +287,20 @@
   padding: 0;
   border-radius: 50%;
   color: rgba(255, 255, 255, 0.88);
-  transition: transform 140ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease, color 120ms ease;
+  transition: transform 140ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
 .ll-fullscreen-transport button:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(calc(16px * var(--ll-fullscreen-scale, 1))) saturate(180%);
+  -webkit-backdrop-filter: blur(calc(16px * var(--ll-fullscreen-scale, 1))) saturate(180%);
+  box-shadow: inset 0 calc(0.75px * var(--ll-fullscreen-scale, 1)) 0 rgba(255, 255, 255, 0.35);
   color: #ffffff;
 }
 
 .ll-fullscreen-transport button:active {
-  transform: scale(0.96);
+  transform: scale(0.92);
+  background: rgba(255, 255, 255, 0.22);
   transition-duration: 70ms;
 }
 
@@ -296,6 +317,7 @@
   position: relative;
   width: calc(44px * var(--ll-fullscreen-scale, 1));
   height: calc(44px * var(--ll-fullscreen-scale, 1));
+  border-radius: 50%;
   color: #ffffff;
 }
 .ll-fullscreen-play > span {
@@ -311,7 +333,11 @@
 .ll-fullscreen-play[data-playing="true"] .ll-transport-pause-icon { opacity: 1; }
 
 .ll-fullscreen-controls .ll-fullscreen-play:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(calc(20px * var(--ll-fullscreen-scale, 1))) saturate(200%);
+  -webkit-backdrop-filter: blur(calc(20px * var(--ll-fullscreen-scale, 1))) saturate(200%);
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) 0 rgba(255, 255, 255, 0.45),
+              0 calc(4px * var(--ll-fullscreen-scale, 1)) calc(16px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.2);
 }
 
 .ll-fullscreen-controls .ll-fullscreen-play svg {
@@ -371,15 +397,28 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: calc(.5px * var(--ll-fullscreen-scale, 1)) solid #ffffff33;
-  background: #ffffff29;
-  backdrop-filter: blur(calc(25px * var(--ll-fullscreen-scale, 1))) saturate(180%);
-  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) 0 #ffffff40, 0 calc(4px * var(--ll-fullscreen-scale, 1)) calc(16px * var(--ll-fullscreen-scale, 1)) #0000002e;
+  border: calc(0.5px * var(--ll-fullscreen-scale, 1)) solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(calc(30px * var(--ll-fullscreen-scale, 1))) saturate(200%) brightness(1.05);
+  -webkit-backdrop-filter: blur(calc(30px * var(--ll-fullscreen-scale, 1))) saturate(200%) brightness(1.05);
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) calc(0.5px * var(--ll-fullscreen-scale, 1)) rgba(255, 255, 255, 0.45),
+              inset 0 calc(-1px * var(--ll-fullscreen-scale, 1)) calc(0.5px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.12),
+              0 calc(6px * var(--ll-fullscreen-scale, 1)) calc(20px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.22);
   color: #ffffffe6;
   cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease;
 }
-.ll-fullscreen-exit:hover { background: #ffffff40; }
-.ll-fullscreen-exit:active { transform: scale(.92); }
+.ll-fullscreen-exit:hover {
+  background: rgba(255, 255, 255, 0.26);
+  border-color: rgba(255, 255, 255, 0.45);
+  transform: scale(1.06);
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) calc(0.5px * var(--ll-fullscreen-scale, 1)) rgba(255, 255, 255, 0.55),
+              0 calc(8px * var(--ll-fullscreen-scale, 1)) calc(24px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.28);
+}
+.ll-fullscreen-exit:active {
+  background: rgba(255, 255, 255, 0.32);
+  transform: scale(0.92);
+}
 .ll-fullscreen-exit svg { width: calc(11px * var(--ll-fullscreen-scale, 1)); height: calc(11px * var(--ll-fullscreen-scale, 1)); }
 
 .ll-fullscreen-top-right-capsule {
@@ -395,18 +434,22 @@
   box-sizing: border-box;
   padding: calc(2px * var(--ll-fullscreen-scale, 1)) calc(8px * var(--ll-fullscreen-scale, 1));
   border-radius: calc(14px * var(--ll-fullscreen-scale, 1));
-  background: rgba(255, 255, 255, 0.16);
-  border: calc(0.5px * var(--ll-fullscreen-scale, 1)) solid rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(calc(25px * var(--ll-fullscreen-scale, 1))) saturate(180%);
-  -webkit-backdrop-filter: blur(calc(25px * var(--ll-fullscreen-scale, 1))) saturate(180%);
-  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) 0 rgba(255, 255, 255, 0.25), 0 calc(4px * var(--ll-fullscreen-scale, 1)) calc(16px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.18);
+  background: rgba(255, 255, 255, 0.14);
+  border: calc(0.5px * var(--ll-fullscreen-scale, 1)) solid rgba(255, 255, 255, 0.24);
+  backdrop-filter: blur(calc(30px * var(--ll-fullscreen-scale, 1))) saturate(200%) brightness(1.05);
+  -webkit-backdrop-filter: blur(calc(30px * var(--ll-fullscreen-scale, 1))) saturate(200%) brightness(1.05);
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) calc(0.5px * var(--ll-fullscreen-scale, 1)) rgba(255, 255, 255, 0.38),
+              inset 0 calc(-1px * var(--ll-fullscreen-scale, 1)) calc(0.5px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.1),
+              0 calc(6px * var(--ll-fullscreen-scale, 1)) calc(20px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.2);
   color: rgba(255, 255, 255, 0.85);
-  transition: height 180ms ease, border-radius 180ms ease, background-color 180ms ease, border-color 180ms ease;
+  transition: height 180ms cubic-bezier(0.2, 0, 0, 1), border-radius 180ms cubic-bezier(0.2, 0, 0, 1), background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
 .ll-fullscreen-volume:hover {
-  background-color: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.35);
+  background-color: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.4);
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) calc(0.5px * var(--ll-fullscreen-scale, 1)) rgba(255, 255, 255, 0.5),
+              0 calc(8px * var(--ll-fullscreen-scale, 1)) calc(24px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.24);
 }
 
 .ll-fullscreen-volume.ll-volume-active,
@@ -414,8 +457,10 @@
 .ll-fullscreen-volume:has(input:focus-visible) {
   height: calc(36px * var(--ll-fullscreen-scale, 1));
   border-radius: calc(18px * var(--ll-fullscreen-scale, 1));
-  background-color: rgba(255, 255, 255, 0.24);
-  border-color: rgba(255, 255, 255, 0.45);
+  background-color: rgba(255, 255, 255, 0.26);
+  border-color: rgba(255, 255, 255, 0.48);
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) calc(0.5px * var(--ll-fullscreen-scale, 1)) rgba(255, 255, 255, 0.55),
+              0 calc(10px * var(--ll-fullscreen-scale, 1)) calc(28px * var(--ll-fullscreen-scale, 1)) rgba(0, 0, 0, 0.28);
 }
 
 .ll-fullscreen-mute-btn {
