@@ -30,6 +30,7 @@ export interface LyricsQuery {
   spotifyId?: string;
   imageUri?: string;
   skipCache?: boolean;
+  probeAll?: boolean;
 }
 
 export interface LyricsProvider {

@@ -1,8 +1,15 @@
+import { isDev, logger } from './utils/logger';
 import { fetchLyrics } from './lyrics/chain';
 import { createLyricsController, initPlayerListener } from './player/listener';
 import { fetchSpotifySongwriters } from './player/credits';
 import { LyricsView } from './renderer/lyrics-view';
 import type { LyricsResult } from './types/types';
+
+declare global {
+  interface Window {
+    refetchLyrics?: () => Promise<LyricsResult | null>;
+  }
+}
 
 const LIQUID_ICON = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 5 23 15" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -161,7 +168,7 @@ async function main() {
       toggleElement = playbarBtn.element;
     } catch (err) {
       playbarBtn = null;
-      console.warn('[Liquid Lyrics] Playbar button registration failed, trying Topbar:', err);
+      logger.warn('[Liquid Lyrics] Playbar button registration failed, trying Topbar:', err);
     }
   }
 
@@ -170,7 +177,7 @@ async function main() {
       const topbarBtn = new spicetify.Topbar.Button('Liquid Lyrics', LIQUID_ICON, () => toggleLyrics());
       toggleElement = topbarBtn.button;
     } catch (err) {
-      console.warn('[Liquid Lyrics] Topbar button registration failed:', err);
+      logger.warn('[Liquid Lyrics] Topbar button registration failed:', err);
     }
   }
 
@@ -230,7 +237,12 @@ async function main() {
     }
   });
 
+  if (isDev && typeof window !== 'undefined') {
+    window.refetchLyrics = () =>
+      controller.refetch(controller.getState().item ?? spicetify.Player.data?.item, true);
+  }
+
   initPlayerListener(controller, spicetify);
 }
 
-void main().catch((error: unknown) => console.error('[Liquid Lyrics] Initialization failed:', error));
+void main().catch((error: unknown) => logger.error('[Liquid Lyrics] Initialization failed:', error));

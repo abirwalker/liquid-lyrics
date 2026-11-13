@@ -11,6 +11,7 @@ import { fetchLyricsChain, createDefaultChain, fetchLyrics } from '../src/lyrics
 import { LyricsCache, MemoryCache, IndexedDbStorage, getCacheKeys, normalizeString } from '../src/storage/cache';
 import { extractQuery } from '../src/player/listener';
 import { cleanTitle, createCleanQuery } from '../src/lyrics/cleaner';
+import { enableLLDebug, isDebugLogging } from '../src/utils/logger';
 import { runBudgetChecks } from './request-budget';
 import { runCreditChecks } from './credits';
 import { runSharedLyricsStateChecks } from './shared-lyrics-state';
@@ -720,6 +721,8 @@ export async function runBoundaryChecks() {
       spotifyFallbackCalls++;
       return { body: spotifyFixture, status: 200 };
     };
+    const wasDebugLogging = isDebugLogging();
+    enableLLDebug(true);
     const providerMessages: unknown[][] = [];
     const originalInfo = console.info;
     console.info = (...args) => { providerMessages.push(args); };
@@ -728,6 +731,7 @@ export async function runBoundaryChecks() {
       spotifyFallback = await fetchLyrics({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover', skipCache: true }, undefined, new LyricsCache());
     } finally {
       console.info = originalInfo;
+      enableLLDebug(wasDebugLogging);
     }
     const providerPath = providerMessages.find(([message]) => message === '[Liquid Lyrics] Provider path:')?.[1] as
       { selected?: string; attempts?: Array<{ provider: string; outcome: string }> } | undefined;
@@ -737,6 +741,56 @@ export async function runBoundaryChecks() {
       providerPath.attempts?.map(attempt => `${attempt.provider}:${attempt.outcome}`).join(',') ===
         'binilyrics:unavailable,lyricsplus:static,spotify:line',
     'Provider path reports only observed outcomes in order');
+    const probeCache = new LyricsCache();
+    await probeCache.set({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover' }, {
+      source: 'lrclib', instrumental: false,
+      lines: [{ text: 'Cached line', timing: 'line', startMs: 1000, endMs: 2000, agent: null,
+        segments: [{ text: 'Cached line', startMs: null, endMs: null, role: null }] }],
+    });
+    const probeMessages: unknown[][] = [];
+    const prevFetch = globalThis.fetch;
+    const prevSpotifySend = spotifySend;
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.startsWith('https://lyrics-api.binimum.org/')) {
+        return Response.json({ results: [{ track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/line.ttml' }] });
+      }
+      if (url === 'https://example.com/line.ttml') return new Response(ttml);
+      if (url.startsWith('https://lyricsplus.binimum.org/')) return Response.json(lyricsPlusFixture);
+      if (url.startsWith('https://api.amll.dev/')) return Response.json({ lyrics: null });
+      if (url.startsWith('https://lrclib.net/')) return Response.json({ syncedLyrics: '[00:01]Fallback' });
+      throw new Error(`Unexpected probe URL: ${url}`);
+    };
+    spotifySend = async () => ({ body: spotifyFixture, status: 200 });
+    enableLLDebug(true);
+    console.info = (...args) => { probeMessages.push(args); };
+    let probed: Lyrics | null;
+    try {
+      probed = await fetchLyrics(
+        { ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover', probeAll: true },
+        undefined,
+        probeCache,
+      );
+    } finally {
+      globalThis.fetch = prevFetch;
+      spotifySend = prevSpotifySend;
+      console.info = originalInfo;
+      enableLLDebug(wasDebugLogging);
+    }
+    const probeReport = probeMessages.find(([message]) => message === '[Liquid Lyrics] Provider probe:')?.[1] as
+      { selected?: string; providers?: Array<{ provider: string; outcome: string; lines?: number }> } | undefined;
+    check(probed?.source === 'lyricsplus' && !probed.cached &&
+      probeReport?.selected === 'lyricsplus' &&
+      probeReport.providers?.map(entry => `${entry.provider}:${entry.outcome}`).join(',') ===
+        'binilyrics:line,lyricsplus:word,spotify:line,amll:unavailable,lrclib:line' &&
+      probeReport.providers.every(entry => entry.outcome === 'unavailable' || typeof entry.lines === 'number'),
+    'probeAll bypasses cache, queries all five providers, and logs their outcomes');
+    const recached = await fetchLyrics({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover' }, undefined, probeCache);
+    check(recached?.source === 'lyricsplus' && recached.cached === true,
+      'probeAll updates the cache with the selected provider result');
+    enableLLDebug(0 as unknown as boolean);
+    check(!isDebugLogging(), 'Falsy debug toggle coerces cleanly to disabled');
+    enableLLDebug(wasDebugLogging);
     const cachedNote = { ...spotifyInterlude!, lines: [
       { ...spotifyInterlude!.lines[0], endMs: 9000 },
       { text: '♪', timing: 'line' as const, startMs: 3000, endMs: 12000, agent: null,

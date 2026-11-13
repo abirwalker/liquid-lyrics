@@ -106,8 +106,12 @@ export async function runSharedLyricsStateChecks() {
     'A track switch during notification cannot start the superseded lookup');
   redirected.destroy();
 
-  let listenerFetches = 0;
-  const listenerController = createLyricsController(async () => { listenerFetches++; return result; }, logger);
+  const listenerQueries: Array<{ skipCache?: boolean; probeAll?: boolean }> = [];
+  const refreshedResult: LyricsResult = { ...result, source: 'refreshed' };
+  const listenerController = createLyricsController(async query => {
+    listenerQueries.push({ skipCache: query.skipCache, probeAll: query.probeAll });
+    return listenerQueries.length > 1 ? refreshedResult : result;
+  }, logger);
   let songChange: ((event?: unknown) => void) | null = null;
   const stop = initPlayerListener(listenerController, { Player: {
     data: { item: first },
@@ -119,7 +123,12 @@ export async function runSharedLyricsStateChecks() {
   const dispatch = songChange as ((event?: unknown) => void) | null;
   dispatch?.({ data: { item: first } });
   await Promise.resolve();
-  check(listenerFetches === 1, 'Startup and songchange events use one controller request');
+  check(listenerQueries.length === 1, 'Startup and songchange events use one controller request');
+  const refetched = await listenerController.refetch();
+  const lastQuery = listenerQueries.at(-1);
+  check(listenerQueries.length === 2 && lastQuery?.skipCache === true && lastQuery?.probeAll === true &&
+    refetched?.source === 'refreshed' && listenerController.getState().result?.source === 'refreshed',
+  'Refetch bypasses same-URI deduplication and runs a uncached all-provider probe');
   stop();
   check(songChange === null, 'Stopping the player listener releases its shared controller');
   return { checks };
