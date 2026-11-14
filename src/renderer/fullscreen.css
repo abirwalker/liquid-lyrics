@@ -525,7 +525,8 @@
     grid-template-columns: var(--ll-artwork-column-width) minmax(0, 1fr);
     gap: 16px;
   }
-  #liquid-lyrics-overlay.ll-fullscreen.ll-with-track .ll-player {
+  #liquid-lyrics-overlay.ll-fullscreen.ll-with-track .ll-player,
+  #liquid-lyrics-overlay.ll-fullscreen.ll-with-track .ll-status-msg:not(.ll-status-loading) {
     inset-inline-end: 0;
   }
   .ll-fullscreen.ll-with-track .ll-plain-lyrics {

@@ -6,6 +6,7 @@ import { convertToAmllLines, type DisplayLyricLine } from './adapter';
 import { getSongwriters, isRecord } from '../types/types';
 import { TrackPanel } from './track-panel';
 import { FullscreenControls } from './fullscreen-controls';
+import { getNoLyricsMessage, resetNoLyricsMessage } from '../storage/no-lyrics';
 
 const PROVIDER_CREDITS = new Map([
   ['binilyrics', 'BiniLyrics · Binimum'],
@@ -311,6 +312,7 @@ export class LyricsView {
   private background: MeshGradientRenderer | null = null;
   private artworkUrl = '';
   private artworkVersion = 0;
+  private lastTrackKey: unknown = undefined;
   private artworkRequestVersion = -1;
   private artworkTask: Promise<void> = Promise.resolve();
   private reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -435,7 +437,7 @@ export class LyricsView {
 
   public setLyrics(result: LyricsResult | null) {
     if (!result || result.instrumental) {
-      this.showStatus(result?.instrumental ? 'Instrumental track' : 'No lyrics available');
+      this.showStatus(result?.instrumental ? 'Instrumental track' : getNoLyricsMessage());
       return;
     }
 
@@ -466,7 +468,7 @@ export class LyricsView {
 
     const lines = convertToAmllLines(result);
     if (lines.length === 0) {
-      this.showStatus('No lyrics available');
+      this.showStatus(getNoLyricsMessage());
       return;
     }
 
@@ -576,6 +578,15 @@ export class LyricsView {
   }
 
   public updateTrack(track: unknown) {
+    const trackKey = isRecord(track) && typeof track.uri === 'string'
+      ? track.uri
+      : isRecord(track) && typeof track.name === 'string'
+        ? track.name
+        : track;
+    if (trackKey !== this.lastTrackKey) {
+      this.lastTrackKey = trackKey;
+      resetNoLyricsMessage();
+    }
     this.trackPanel.updateTrack(track);
     const metadata = isRecord(track) && isRecord(track.metadata) ? track.metadata : {};
     const source = metadata.image_xlarge_url ?? metadata.image_large_url ?? metadata.image_url;

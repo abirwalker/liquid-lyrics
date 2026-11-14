@@ -474,16 +474,28 @@ button[data-testid="lyrics-button"],
 
 .ll-status-msg {
   position: absolute;
-  inset: 0;
+  inset: 0 max(0px, calc((100% - 1040px) / 2));
   z-index: 2;
+  box-sizing: border-box;
   display: grid;
   place-content: center;
-  padding: 32px;
+  padding: 0 clamp(24px, 5cqw, 64px);
   color: rgb(255 255 255 / 75%);
-  font-size: 22px;
-  font-weight: 600;
+  font-family: inherit;
+  font-size: var(--ll-lyric-size, 28px);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -.015em;
   text-align: center;
   pointer-events: none;
+}
+
+.ll-with-track .ll-status-msg:not(.ll-status-loading) {
+  inset-block: 0;
+  inset-inline-start: 0;
+  inset-inline-end: calc(var(--ll-view-width) * .04);
+  padding-inline: 5cqw;
+  font-size: var(--ll-artwork-lyric-size);
 }
 
 /* Loading skeleton: one calm shared shimmer, anchored to the stage height. */
