@@ -28,6 +28,7 @@
   z-index: 3;
 }
 .ll-track-actions > button {
+  position: relative;
   display: grid;
   place-items: center;
   width: calc(24px * var(--ll-fullscreen-scale, 1));
@@ -40,6 +41,18 @@
   cursor: pointer;
   transition: background 140ms ease, color 120ms ease, box-shadow 140ms ease;
 }
+.ll-track-actions > button::before {
+  content: '';
+  position: absolute;
+  inset-block: calc(-10px * var(--ll-fullscreen-scale, 1));
+  inset-inline: 0;
+}
+@keyframes ll-heart-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.18); }
+  75% { transform: scale(0.96); }
+  100% { transform: scale(1); }
+}
 .ll-track-actions > button:hover {
   background: var(--ll-glass-hover-bg);
   backdrop-filter: var(--ll-glass-hover-filter);
@@ -51,7 +64,82 @@
   background: rgba(255, 255, 255, 0.22);
   transform: none;
 }
-.ll-track-actions > button svg { width: 65%; height: 65%; fill: currentColor; }
+.ll-track-actions > button svg {
+  width: 65%;
+  height: 65%;
+  fill: currentColor;
+  transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+.ll-track-actions > button:active svg {
+  transform: scale(0.86);
+}
+.ll-track-like[aria-pressed="true"] {
+  color: #fff;
+}
+.ll-track-like.ll-heart-popping svg.ll-heart-main {
+  animation: ll-heart-pop 320ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+.ll-track-like.ll-heart-breaking svg.ll-heart-main {
+  animation: ll-heart-unheart-settle 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes ll-heart-unheart-settle {
+  0% { transform: scale(0.9); }
+  55% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+.ll-heart-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+  display: grid;
+  place-items: center;
+}
+.ll-heart-split {
+  position: absolute;
+  width: 65%;
+  height: 65%;
+  fill: #fff;
+  pointer-events: none;
+}
+.ll-heart-split-left {
+  clip-path: polygon(0 0, 53% 0, 44% 38%, 55% 64%, 48% 100%, 0 100%);
+  transform-origin: 55% 85%;
+  animation: ll-split-left 340ms cubic-bezier(0.18, 0.9, 0.3, 1) forwards;
+}
+.ll-heart-split-right {
+  clip-path: polygon(53% 0, 100% 0, 100% 100%, 48% 100%, 55% 64%, 44% 38%);
+  transform-origin: 45% 85%;
+  animation: ll-split-right 340ms cubic-bezier(0.18, 0.9, 0.3, 1) forwards;
+}
+@keyframes ll-split-left {
+  0% { opacity: 0.96; transform: translate(0, 0) rotate(0deg) scale(1); }
+  35% { opacity: 0.9; transform: translate(calc(-2.4px * var(--ll-fullscreen-scale, 1)), calc(-0.6px * var(--ll-fullscreen-scale, 1))) rotate(-11deg) scale(0.98); }
+  100% { opacity: 0; transform: translate(calc(-4.2px * var(--ll-fullscreen-scale, 1)), calc(2.8px * var(--ll-fullscreen-scale, 1))) rotate(-19deg) scale(0.84); }
+}
+@keyframes ll-split-right {
+  0% { opacity: 0.96; transform: translate(0, 0) rotate(0deg) scale(1); }
+  35% { opacity: 0.9; transform: translate(calc(2.4px * var(--ll-fullscreen-scale, 1)), calc(-0.6px * var(--ll-fullscreen-scale, 1))) rotate(11deg) scale(0.98); }
+  100% { opacity: 0; transform: translate(calc(4.2px * var(--ll-fullscreen-scale, 1)), calc(2.8px * var(--ll-fullscreen-scale, 1))) rotate(19deg) scale(0.84); }
+}
+.ll-heart-particle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--p-size, 2.4px) * var(--ll-fullscreen-scale, 1));
+  height: calc(var(--p-size, 2.4px) * var(--ll-fullscreen-scale, 1));
+  margin-left: calc(var(--p-size, 2.4px) * var(--ll-fullscreen-scale, 1) * -0.5);
+  margin-top: calc(var(--p-size, 2.4px) * var(--ll-fullscreen-scale, 1) * -0.5);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 92%);
+  pointer-events: none;
+  animation: ll-particle-burst var(--p-dur, 400ms) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes ll-particle-burst {
+  0% { opacity: 0.95; transform: translate(0, 0) scale(0.6); }
+  30% { opacity: 0.95; transform: translate(calc(var(--tx) * 0.65 * var(--ll-fullscreen-scale, 1)), calc(var(--ty) * 0.65 * var(--ll-fullscreen-scale, 1))) scale(1.08); }
+  100% { opacity: 0; transform: translate(calc(var(--tx) * var(--ll-fullscreen-scale, 1)), calc((var(--ty) + var(--drop, 0px)) * var(--ll-fullscreen-scale, 1))) scale(0.15); }
+}
 .ll-heart-outline,
 .ll-heart-fill { transition: opacity 180ms cubic-bezier(0.2, 0, 0, 1); }
 .ll-heart-outline { fill: currentColor; stroke: none; }
@@ -80,9 +168,9 @@
   from { opacity: 0; translate: 0 calc(4px * var(--ll-fullscreen-scale, 1)); }
   to { opacity: 1; translate: 0 0; }
 }
-@keyframes ll-track-menu-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+@keyframes ll-track-feedback-in {
+  from { opacity: 0; translate: 0 calc(6px * var(--ll-fullscreen-scale, 1)); }
+  to { opacity: 1; translate: 0 0; }
 }
 .ll-track-feedback {
   z-index: 5;
@@ -90,24 +178,57 @@
   bottom: max(calc(28px * var(--ll-fullscreen-scale, 1)), env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(8px * var(--ll-fullscreen-scale, 1));
   width: max-content;
   max-width: calc(100vw - 32px);
+  min-height: calc(40px * var(--ll-fullscreen-scale, 1));
   box-sizing: border-box;
-  padding: calc(10px * var(--ll-fullscreen-scale, 1)) calc(18px * var(--ll-fullscreen-scale, 1));
-  border: calc(1px * var(--ll-fullscreen-scale, 1)) solid rgb(255 255 255 / 22%);
-  border-radius: 14px;
-  color: #fff;
-  background: rgb(28 32 38 / 52%);
-  backdrop-filter: blur(calc(32px * var(--ll-fullscreen-scale, 1))) saturate(165%);
-  -webkit-backdrop-filter: blur(calc(32px * var(--ll-fullscreen-scale, 1))) saturate(165%);
-  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) 0 rgb(255 255 255 / 14%), 0 calc(8px * var(--ll-fullscreen-scale, 1)) calc(24px * var(--ll-fullscreen-scale, 1)) #0003;
+  padding: calc(10px * var(--ll-fullscreen-scale, 1)) calc(18px * var(--ll-fullscreen-scale, 1)) calc(10px * var(--ll-fullscreen-scale, 1)) calc(14px * var(--ll-fullscreen-scale, 1));
+  border: calc(1px * var(--ll-fullscreen-scale, 1)) solid rgb(255 255 255 / 24%);
+  border-radius: 9999px;
+  color: rgb(255 255 255 / 95%);
+  background: rgb(28 32 38 / 58%);
+  backdrop-filter: blur(calc(32px * var(--ll-fullscreen-scale, 1))) saturate(180%);
+  -webkit-backdrop-filter: blur(calc(32px * var(--ll-fullscreen-scale, 1))) saturate(180%);
+  box-shadow: inset 0 calc(1px * var(--ll-fullscreen-scale, 1)) 0 rgb(255 255 255 / 22%), 0 calc(10px * var(--ll-fullscreen-scale, 1)) calc(28px * var(--ll-fullscreen-scale, 1)) rgb(0 0 0 / 28%);
   font-family: inherit;
   font-size: calc(14px * var(--ll-fullscreen-scale, 1));
   font-weight: 500;
-  line-height: 1.4;
-  text-align: center;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
   pointer-events: none;
-  animation: ll-track-menu-in 150ms ease-out;
+  animation: ll-track-feedback-in 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+.ll-track-feedback .ll-feedback-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(16px * var(--ll-fullscreen-scale, 1));
+  height: calc(16px * var(--ll-fullscreen-scale, 1));
+  color: #fff;
+}
+.ll-track-feedback .ll-feedback-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+.ll-track-feedback .ll-feedback-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ll-track-feedback,
+  .ll-track-like.ll-heart-popping svg.ll-heart-main,
+  .ll-track-like.ll-heart-breaking svg.ll-heart-main,
+  .ll-heart-split,
+  .ll-heart-particle { animation: none; }
+  .ll-track-actions > button svg { transition: none; }
 }
 .ll-track-menu button {
   display: flex;
