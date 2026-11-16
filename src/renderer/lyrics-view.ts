@@ -962,7 +962,7 @@ export class LyricsView {
       }
       let progress = this.getProgress();
       const seeking = this.lastProgress === null || Math.abs(progress - this.lastProgress) > 1000;
-      if (playing && !seeking && this.lastProgress !== null && progress < this.lastProgress) {
+      if (playing && !seeking && this.lastProgress !== null && progress < this.lastProgress && this.lastProgress - progress < 200) {
         progress = this.lastProgress;
       }
       const progressChanged = progress !== this.lastProgress;
