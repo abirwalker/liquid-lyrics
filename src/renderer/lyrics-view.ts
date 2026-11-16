@@ -6,6 +6,7 @@ import { convertToAmllLines, type DisplayLyricLine } from './adapter';
 import { getSongwriters, isRecord } from '../types/types';
 import { TrackPanel } from './track-panel';
 import { FullscreenControls } from './fullscreen-controls';
+import { getNoLyricsMessage, resetNoLyricsMessage } from '../storage/no-lyrics';
 
 const PROVIDER_CREDITS = new Map([
   ['binilyrics', 'BiniLyrics · Binimum'],
@@ -17,9 +18,13 @@ const PROVIDER_CREDITS = new Map([
 
 const LYRIC_ALIGN_POSITION = 0.35;
 const CREDITS_END_POSITION = 0.7;
+const SKELETON_LINE_COUNT = 5;
 
 class CreditsLyricPlayer extends DomLyricPlayer {
   private cachedFooterOffset: number | null = null;
+  private lastContainerWidth = 0;
+  private lastBuiltWidth = 0;
+  private lastContainerHeight = 0;
 
   public invalidateFooterOffset() {
     this.cachedFooterOffset = null;
@@ -31,15 +36,196 @@ class CreditsLyricPlayer extends DomLyricPlayer {
   }
 
   public override calcLayout(reason: any) {
-    if (reason === LayoutReason.Resize || reason === LayoutReason.ConfigChange) {
+    if (this.size[1] <= 0) {
+      const rect = this.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.size[0] = rect.width;
+        this.size[1] = rect.height;
+      } else {
+        return;
+      }
+    }
+    if (reason === LayoutReason.ConfigChange || this.size[0] !== this.lastContainerWidth || this.size[1] !== this.lastContainerHeight) {
+      if (this.size[0] !== this.lastContainerWidth) {
+        this.lastBuiltWidth = 0;
+      }
+      this.lastContainerWidth = this.size[0];
+      this.lastContainerHeight = this.size[1];
       this.cachedFooterOffset = null;
     }
     return super.calcLayout(reason);
   }
 
+  public override update(delta: number) {
+    if (this.size[1] <= 0) {
+      const rect = this.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.size[0] = rect.width;
+        this.size[1] = rect.height;
+      } else {
+        return;
+      }
+    }
+    super.update(delta);
+  }
+
+  public override rebuildLyricView(initialTime = this.getCurrentTime()) {
+    if (this.size[1] <= 0 && this.getElement().isConnected) {
+      const rect = this.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.size[0] = rect.width;
+        this.size[1] = rect.height;
+      }
+    }
+    super.rebuildLyricView(initialTime);
+    this.setLinePosYSpringParams({ mass: 1.3 });
+    this.lastBuiltWidth = this.getElement().isConnected ? this.size[0] : 0;
+  }
+
+  public override buildLyricGroups() {
+    super.buildLyricGroups();
+    for (const group of this.currentLyricGroups) {
+      this.decorateLyricLine(group.mainLine);
+      if (group.bgLine) this.decorateLyricLine(group.bgLine);
+      const origHide = group.hide.bind(group);
+      group.hide = () => {
+        const wasMounted = !!group.getElement().parentElement;
+        origHide();
+        if (wasMounted && !group.isActive) {
+          this.resetOffscreenLineAnimations(group.mainLine);
+          if (group.bgLine) this.resetOffscreenLineAnimations(group.bgLine);
+        }
+      };
+    }
+  }
+
+  private decorateLyricLine(line: any) {
+    if (!line || line.__llDecorated) return;
+    line.__llDecorated = true;
+    const origRebuild = line.rebuildElement.bind(line);
+    line.rebuildElement = () => {
+      line.__llMaskW = 0;
+      line.__llMaskH = 0;
+      origRebuild();
+    };
+    const origUpdateMask = line.updateMaskImageSync.bind(line);
+    line.updateMaskImageSync = () => {
+      origUpdateMask();
+      const el = line.getElement() as HTMLElement | undefined;
+      if (el) {
+        line.__llMaskW = el.clientWidth;
+        line.__llMaskH = el.clientHeight;
+      }
+    };
+    const origOnSizeChange = line.onLineSizeChange.bind(line);
+    line.onLineSizeChange = (size: [number, number]) => {
+      const el = line.getElement() as HTMLElement | undefined;
+      if (line.built && el && el.clientWidth > 0 && el.clientWidth === line.__llMaskW && el.clientHeight === line.__llMaskH) {
+        return;
+      }
+      origOnSizeChange(size);
+    };
+  }
+
+  private resetOffscreenLineAnimations(line: any) {
+    if (!line) return;
+    line.pause?.();
+    if (Array.isArray(line.splittedWords)) {
+      for (const word of line.splittedWords) {
+        if (!Array.isArray(word.elementAnimations)) continue;
+        for (const anim of word.elementAnimations) {
+          anim.pause();
+          anim.playbackRate = 1;
+          anim.currentTime = 0;
+        }
+      }
+    }
+  }
+
+  public playEntryAnimation(initialTime = this.getCurrentTime()) {
+    if (this.size[1] <= 0 && this.getElement().isConnected) {
+      const rect = this.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.size[0] = rect.width;
+        this.size[1] = rect.height;
+      }
+    }
+    if (this.size[0] <= 0 || this.size[0] !== this.lastBuiltWidth || this.currentLyricGroups.length === 0) {
+      this.rebuildLyricView(initialTime);
+      return;
+    }
+    this.resetScroll();
+    (this as any).focusController?.reset();
+    if (this.getBottomLineElement().innerHTML.trim().length > 0) {
+      (this as any).bottomLine?.resetPosition();
+    }
+    (this as any).interludeDots?.clearInterlude(true);
+    (this as any).layoutCalculator?.updateUnmeasuredHeights((this as any).defaultLineHeight);
+    (this as any).timelineController?.reset();
+    for (const group of this.currentLyricGroups) {
+      if ((group.mainLine as any).isEnabled || (group.bgLine as any)?.isEnabled) {
+        group.disable();
+      }
+    }
+    (this as any).seekDetector?.reset();
+    this.setCurrentTime(initialTime, true);
+    this.setLinePosYSpringParams({ mass: 1.3 });
+    for (const group of this.currentLyricGroups) {
+      if (group.opacity > 0) {
+        group.posY.setPosition(window.innerHeight * 2);
+        group.posY.setTargetPosition(group.top);
+      } else {
+        group.posY.setPosition(group.top);
+      }
+      (group as any).lastYNum = -9999;
+      (group as any).isUiDirty = true;
+    }
+    this.update(0);
+  }
+
+  public hasActiveAnimations(): boolean {
+    const bottomPosY = (this as any).bottomLine?.lineTransforms?.posY;
+    if (bottomPosY && !bottomPosY.arrived()) return true;
+    const dots = (this as any).interludeDots;
+    if (dots && dots.phase && dots.phase !== 'idle') return true;
+    for (const group of this.currentLyricGroups) {
+      const inRange = group.isInRenderRange();
+      if (
+        !group.posY.arrived() ||
+        !group.bgSlideY.arrived() ||
+        !group.mainLine.lineTransforms.scale.arrived() ||
+        (group.bgLine && !group.bgLine.lineTransforms.scale.arrived()) ||
+        (inRange && (
+          (group as any).isUiDirty ||
+          (group.mainLine as any).isUiDirty ||
+          (group.bgLine && (group.bgLine as any).isUiDirty)
+        ))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   constructor() {
     super();
     const layoutCalc = (this as any).layoutCalculator;
+    if (layoutCalc) {
+      if (layoutCalc.setLineHeight) {
+        const origSetLineHeight = layoutCalc.setLineHeight.bind(layoutCalc);
+        layoutCalc.setLineHeight = (index: number, height: number) => {
+          if (height <= 0) return;
+          origSetLineHeight(index, height);
+        };
+      }
+      if (layoutCalc.updateUnmeasuredHeights) {
+        const origUpdate = layoutCalc.updateUnmeasuredHeights.bind(layoutCalc);
+        layoutCalc.updateUnmeasuredHeights = (defaultHeight: number) => {
+          if (defaultHeight <= 0) return;
+          origUpdate(defaultHeight);
+        };
+      }
+    }
     if (layoutCalc && layoutCalc.beginFrame) {
       const originalBeginFrame = layoutCalc.beginFrame.bind(layoutCalc);
       layoutCalc.beginFrame = (ctx: any, config: any) => {
@@ -126,6 +312,7 @@ export class LyricsView {
   private background: MeshGradientRenderer | null = null;
   private artworkUrl = '';
   private artworkVersion = 0;
+  private lastTrackKey: unknown = undefined;
   private artworkRequestVersion = -1;
   private artworkTask: Promise<void> = Promise.resolve();
   private reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -140,6 +327,7 @@ export class LyricsView {
   private lastProgress: number | null = null;
   private lines: LyricLine[] = [];
   private finalLyricStart: number | null = null;
+  private creditsReadable = false;
   private creditResult: LyricsResult | null = null;
   private backingCues: Array<{ element: HTMLElement; wrapper: HTMLElement; startMs: number; endMs: number; inferred: boolean }> = [];
   private isOpen = false;
@@ -202,6 +390,7 @@ export class LyricsView {
     this.statusEl = document.createElement('div');
     this.statusEl.className = 'll-status-msg';
     this.statusEl.setAttribute('role', 'status');
+    this.statusEl.setAttribute('aria-live', 'polite');
     this.statusEl.textContent = 'Play a song to see its lyrics';
     lyricStage.appendChild(this.statusEl);
 
@@ -248,7 +437,7 @@ export class LyricsView {
 
   public setLyrics(result: LyricsResult | null) {
     if (!result || result.instrumental) {
-      this.showStatus(result?.instrumental ? 'Instrumental track' : 'No lyrics available');
+      this.showStatus(result?.instrumental ? 'Instrumental track' : getNoLyricsMessage());
       return;
     }
 
@@ -263,6 +452,9 @@ export class LyricsView {
       this.player.getBottomLineElement().replaceChildren();
       this.player.getElement().hidden = true;
       this.statusEl.hidden = true;
+      this.statusEl.classList.remove('ll-status-loading');
+      this.statusEl.removeAttribute('aria-busy');
+      this.statusEl.replaceChildren();
       this.plainLyrics.replaceChildren(...result.lines.map((line) => {
         const paragraph = document.createElement('p');
         paragraph.textContent = line.text;
@@ -276,7 +468,7 @@ export class LyricsView {
 
     const lines = convertToAmllLines(result);
     if (lines.length === 0) {
-      this.showStatus('No lyrics available');
+      this.showStatus(getNoLyricsMessage());
       return;
     }
 
@@ -288,10 +480,23 @@ export class LyricsView {
     this.player.getElement().hidden = false;
     const progress = this.getProgress();
     this.statusEl.hidden = true;
+    this.statusEl.classList.remove('ll-status-loading');
+    this.statusEl.removeAttribute('aria-busy');
+    this.statusEl.replaceChildren();
     this.player.getBottomLineElement().replaceChildren(this.makeCredits(result));
     this.player.invalidateFooterOffset();
     this.player.resetScroll();
     this.player.setLyricLines(lines, progress);
+    this.refreshBackingCues();
+    this.player.setCurrentTime(progress, true);
+    this.updateCreditFocus(progress);
+    this.updateTimedBacking(progress);
+    this.player.update(0);
+    this.lastPlaying = null;
+    this.lastProgress = progress;
+  }
+
+  private refreshBackingCues() {
     this.backingCues = this.player.currentLyricGroups.flatMap((group) => {
       const backing = group.bgLine?.getLine() as DisplayLyricLine | undefined;
       if (!backing?.words.length || !group.bgLine || !group.bgWrapper) return [];
@@ -299,15 +504,25 @@ export class LyricsView {
         startMs: backing.words[0].startTime, endMs: backing.words[backing.words.length - 1].endTime,
         inferred: backing.inferredBacking === true }];
     });
-    this.player.setCurrentTime(progress, true);
-    this.updateCreditFocus(progress);
-    this.updateTimedBacking(progress);
-    this.player.update(0);
-    this.lastPlaying = null;
   }
 
   public setLoading() {
-    this.showStatus('Looking for lyrics…');
+    this.showStatus('Looking for lyrics…', true);
+  }
+
+  private makeSkeleton(message: string): Node[] {
+    const label = document.createElement('span');
+    label.className = 'll-sr-only';
+    label.textContent = message;
+    const skeleton = document.createElement('div');
+    skeleton.className = 'll-skeleton';
+    skeleton.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < SKELETON_LINE_COUNT; i++) {
+      const line = document.createElement('span');
+      line.className = 'll-skeleton-line';
+      skeleton.appendChild(line);
+    }
+    return [label, skeleton];
   }
 
   public setSongwriters(names: string[]) {
@@ -339,7 +554,7 @@ export class LyricsView {
     return footer;
   }
 
-  private showStatus(message: string) {
+  private showStatus(message: string, loading = false) {
     this.creditResult = null;
     this.finalLyricStart = null;
     this.updateCreditFocus(0);
@@ -351,23 +566,43 @@ export class LyricsView {
     this.player.setLyricLines([]);
     this.player.getBottomLineElement().replaceChildren();
     this.player.update(0);
-    this.statusEl.textContent = message;
+    this.statusEl.classList.toggle('ll-status-loading', loading);
+    if (loading) {
+      this.statusEl.setAttribute('aria-busy', 'true');
+      this.statusEl.replaceChildren(...this.makeSkeleton(message));
+    } else {
+      this.statusEl.removeAttribute('aria-busy');
+      this.statusEl.textContent = message;
+    }
     this.statusEl.hidden = false;
   }
 
   public updateTrack(track: unknown) {
+    const trackKey = isRecord(track) && typeof track.uri === 'string'
+      ? track.uri
+      : isRecord(track) && typeof track.name === 'string'
+        ? track.name
+        : track;
+    if (trackKey !== this.lastTrackKey) {
+      this.lastTrackKey = trackKey;
+      resetNoLyricsMessage();
+    }
     this.trackPanel.updateTrack(track);
     const metadata = isRecord(track) && isRecord(track.metadata) ? track.metadata : {};
     const source = metadata.image_xlarge_url ?? metadata.image_large_url ?? metadata.image_url;
     const url = typeof source === 'string' ? source.replace(/^spotify:image:/, 'https://i.scdn.co/image/') : '';
     if (url === this.artworkUrl) return;
-    this.trackPanel.setArtwork(null);
     this.artworkUrl = url;
     this.artworkVersion++;
-    if (!url && this.background) {
-      this.background.getElement().dataset.ready = 'false';
-      this.pruneStaleBackgroundMeshes(1);
+    if (!url) {
+      this.trackPanel.setArtwork(null, false);
+      if (this.background) {
+        this.background.getElement().dataset.ready = 'false';
+        this.pruneStaleBackgroundMeshes(1);
+      }
+      return;
     }
+    this.trackPanel.setArtwork(null, true);
     if (this.isOpen) this.loadArtwork();
   }
 
@@ -415,6 +650,7 @@ export class LyricsView {
     }).catch((error: unknown) => {
       if (version !== this.artworkVersion) return;
       this.artworkRequestVersion = -1;
+      this.trackPanel.setArtwork(null, false);
       if (background) background.getElement().dataset.ready = 'false';
       console.warn('[Liquid Lyrics] Artwork unavailable:', error);
     });
@@ -556,8 +792,27 @@ export class LyricsView {
       this.mountFrame = null;
       if (!this.isOpen) return;
       pageRoot.scrollTop = 0;
-      this.player.setCurrentTime(this.getProgress(), true);
-      this.player.calcLayout(LayoutReason.Resize);
+      const rect = this.player.getElement().getBoundingClientRect();
+      if (rect.height > 0) {
+        this.player.size[0] = rect.width;
+        this.player.size[1] = rect.height;
+      }
+      const progress = this.getProgress();
+      if (this.lines.length > 0) {
+        if (!this.reducedMotion.matches) {
+          this.player.playEntryAnimation(progress);
+          this.refreshBackingCues();
+          this.updateCreditFocus(progress);
+          this.updateTimedBacking(progress);
+        } else {
+          this.player.setCurrentTime(progress, true);
+          this.player.calcLayout(LayoutReason.Resize);
+          this.updateCreditFocus(progress);
+          this.updateTimedBacking(progress);
+          this.player.update(0);
+        }
+        this.lastProgress = progress;
+      }
     });
   }
 
@@ -584,6 +839,11 @@ export class LyricsView {
     if (!this.isOpen) return;
     this.isOpen = false;
 
+    this.stopLoop();
+    this.player.pause();
+    this.background?.pause();
+    this.pruneStaleBackgroundMeshes(1);
+
     this.hostObserver.disconnect();
     this.trackPanel.unmount();
     this.overlay.remove();
@@ -597,11 +857,6 @@ export class LyricsView {
       this.host.scrollTop = this.savedScrollTop;
     }
     this.host = null;
-
-    this.stopLoop();
-    this.player.pause();
-    this.background?.pause();
-    this.pruneStaleBackgroundMeshes(1);
     this.callbacks.onVisibilityChange(false);
   }
 
@@ -617,20 +872,24 @@ export class LyricsView {
   }
 
   private updateCreditFocus(progress: number) {
-    this.player.getBottomLineElement().classList.toggle('ll-credits-readable',
-      this.finalLyricStart !== null && progress >= this.finalLyricStart);
+    const readable = this.finalLyricStart !== null && progress >= this.finalLyricStart;
+    if (readable !== this.creditsReadable) {
+      this.creditsReadable = readable;
+      this.player.getBottomLineElement().classList.toggle('ll-credits-readable', readable);
+    }
   }
 
   private updateTimedBacking(progress: number) {
     for (const cue of this.backingCues) {
       const finished = progress >= cue.endMs;
-      if (finished && !cue.wrapper.classList.contains('ll-backing-finished')) {
+      const isPast = progress >= cue.endMs + 450;
+      if (finished && !isPast && !cue.wrapper.classList.contains('ll-backing-finished')) {
         cue.wrapper.style.setProperty('--ll-backing-height', `${cue.wrapper.offsetHeight}px`);
       }
       cue.element.classList.toggle('ll-backing-singing', cue.inferred && progress >= cue.startMs && progress < cue.endMs);
       cue.element.classList.toggle('ll-backing-finished', finished);
       cue.wrapper.classList.toggle('ll-backing-finished', finished);
-      cue.wrapper.classList.toggle('ll-backing-past', progress >= cue.endMs + 450);
+      cue.wrapper.classList.toggle('ll-backing-past', isPast);
     }
   }
 
@@ -641,7 +900,7 @@ export class LyricsView {
   }
 
   private onFrame = (now: number) => {
-    this.fullscreenControls?.update();
+    if (this.fullscreen) this.fullscreenControls?.update();
     if (!this.isOpen) {
       this.animFrameId = null;
       return;
@@ -651,6 +910,16 @@ export class LyricsView {
     this.lastFrameTime = now;
     const spotifyPlayer = globalThis.Spicetify?.Player;
     if (spotifyPlayer) {
+      if (this.player.size[1] <= 0) {
+        const rect = this.player.getElement().getBoundingClientRect();
+        if (rect.height > 0) {
+          this.player.size[0] = rect.width;
+          this.player.size[1] = rect.height;
+        } else {
+          this.animFrameId = requestAnimationFrame(this.onFrame);
+          return;
+        }
+      }
       const playing = spotifyPlayer.isPlaying();
       if (playing !== this.lastPlaying) {
         if (playing) this.player.resume();
@@ -659,13 +928,22 @@ export class LyricsView {
         this.background?.resume();
         this.lastPlaying = playing;
       }
+      if (this.mountFrame !== null && this.lines.length > 0) {
+        this.animFrameId = requestAnimationFrame(this.onFrame);
+        return;
+      }
       const progress = this.getProgress();
       const seeking = this.lastProgress === null || Math.abs(progress - this.lastProgress) > 1000;
-      this.player.setCurrentTime(progress, seeking);
-      this.updateCreditFocus(progress);
-      this.lastProgress = progress;
-      this.player.update(deltaMs);
-      this.updateTimedBacking(progress);
+      const progressChanged = progress !== this.lastProgress;
+      if (playing || seeking || progressChanged) {
+        this.player.setCurrentTime(progress, seeking);
+        this.updateCreditFocus(progress);
+        this.lastProgress = progress;
+      }
+      if (playing || seeking || progressChanged || this.player.hasActiveAnimations()) {
+        this.player.update(deltaMs);
+        this.updateTimedBacking(progress);
+      }
     }
     this.animFrameId = requestAnimationFrame(this.onFrame);
   };

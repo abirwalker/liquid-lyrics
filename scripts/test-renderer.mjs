@@ -301,7 +301,41 @@ try {
     'rgba(0, 0, 0, 0.65)', 'plain lyric contrast is preserved');
   await evaluate('fixture.view.setLyrics(null)');
   assert.equal(await evaluate("document.querySelector('.ll-credits')"), null, 'no stale credits after clearing lyrics');
-  assert.equal(await evaluate("document.querySelector('.ll-status-msg').textContent"), 'No lyrics available');
+  const noLyricsCheck = await evaluate(`(() => {
+    const status = document.querySelector('.ll-status-msg');
+    const player = document.querySelector('.ll-player');
+    const sRect = status.getBoundingClientRect();
+    const pRect = player.getBoundingClientRect();
+    const sStyle = getComputedStyle(status);
+    const pStyle = getComputedStyle(player);
+    return {
+      text: status.textContent,
+      cxDelta: Math.abs((sRect.left + sRect.right) / 2 - (pRect.left + pRect.right) / 2),
+      cyDelta: Math.abs((sRect.top + sRect.bottom) / 2 - (pRect.top + pRect.bottom) / 2),
+      widthDelta: Math.abs(sRect.width - pRect.width),
+      statusWeight: sStyle.fontWeight,
+      playerWeight: pStyle.fontWeight,
+      statusSize: sStyle.fontSize,
+      playerSize: pStyle.fontSize,
+    };
+  })()`);
+  assert.ok([
+    "Just vibe. We'll bring the lyrics back next track.",
+    "Congratulations, you get a break from singing!",
+    "Words would only ruin the masterpiece.",
+    "Humming instructions not included.",
+    "You're gonna have to guess this one... if it even has one.",
+    "No lyrics for this one, just listen.",
+    "Make up your own words. Nobody's judging.",
+    "All rhythm, zero reading required.",
+    "Too mysterious to have written lyrics.",
+    "Checked everywhere. Still nothing.",
+    "Just nod along like you know every word.",
+  ].includes(noLyricsCheck.text), `unexpected no-lyrics message: ${noLyricsCheck.text}`);
+  assert.ok(noLyricsCheck.cxDelta < 0.5 && noLyricsCheck.cyDelta < 0.5 && noLyricsCheck.widthDelta < 0.5,
+    `status box must align mathematically with lyric player: ${JSON.stringify(noLyricsCheck)}`);
+  assert.equal(noLyricsCheck.statusWeight, noLyricsCheck.playerWeight, 'no-lyrics font weight matches lyrics');
+  assert.equal(noLyricsCheck.statusSize, noLyricsCheck.playerSize, 'no-lyrics font size matches lyrics');
   await evaluate("fixture.view.setLyrics({source:'test',instrumental:true,lines:[]})");
   assert.equal(await evaluate("document.querySelector('.ll-status-msg').textContent"), 'Instrumental track');
   await evaluate('fixture.view.unmount()');
@@ -719,6 +753,28 @@ try {
   assert.equal(await artworkVisible(), false, 'short view hides artwork');
   await evaluate('fixture.resize(800); fixture.view.unmount(); fixture.view.mount()'); await wait(200);
   assert.equal(await artworkVisible(), true, 'observers reconnect after reopening');
+  await evaluate('fixture.view.setLyrics(null)');
+  const splitNoLyricsCheck = await evaluate(`(() => {
+    const status = document.querySelector('.ll-status-msg');
+    const player = document.querySelector('.ll-player');
+    const sRect = status.getBoundingClientRect();
+    const pRect = player.getBoundingClientRect();
+    const sStyle = getComputedStyle(status);
+    const pStyle = getComputedStyle(player);
+    return {
+      cxDelta: Math.abs((sRect.left + sRect.right) / 2 - (pRect.left + pRect.right) / 2),
+      cyDelta: Math.abs((sRect.top + sRect.bottom) / 2 - (pRect.top + pRect.bottom) / 2),
+      widthDelta: Math.abs(sRect.width - pRect.width),
+      statusWeight: sStyle.fontWeight,
+      playerWeight: pStyle.fontWeight,
+      statusSize: sStyle.fontSize,
+      playerSize: pStyle.fontSize,
+    };
+  })()`);
+  assert.ok(splitNoLyricsCheck.cxDelta < 0.5 && splitNoLyricsCheck.cyDelta < 0.5 && splitNoLyricsCheck.widthDelta < 0.5,
+    `with-track status aligns mathematically with lyric player: ${JSON.stringify(splitNoLyricsCheck)}`);
+  assert.equal(splitNoLyricsCheck.statusWeight, splitNoLyricsCheck.playerWeight, 'with-track no-lyrics font weight matches lyrics');
+  assert.equal(splitNoLyricsCheck.statusSize, splitNoLyricsCheck.playerSize, 'with-track no-lyrics font size matches lyrics');
   await evaluate(`fixture.view.updateTrack({name:'Missing cover',metadata:{}})`); await wait(100);
   assert.equal(await artworkVisible(), false, 'missing cover restores lyrics-only layout');
   assert.equal(await evaluate("document.querySelectorAll('.ll-track-cover img').length"), 0, 'old cover removed');

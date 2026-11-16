@@ -56,6 +56,7 @@ export class TrackPanel {
   private collapsedSidebarWidth: number | null = null;
   private frame: number | null = null;
   private hasArtwork = false;
+  private artworkLoading = false;
   private hasTitle = false;
   private overlay: HTMLElement;
   private resizeObserver = new ResizeObserver(() => this.schedule());
@@ -66,9 +67,14 @@ export class TrackPanel {
     const selector = '#Desktop_PanelContainer_Id, [data-testid="cover-art-button"], [data-testid="control-button-queue"]';
     if (records.some(record => {
       if (this.overlay.contains(record.target)) return false;
-      if (record.type === 'attributes') return record.target instanceof Element &&
-        ((panel !== null && record.target.contains(panel)) || (trigger !== null && record.target.contains(trigger)) ||
-          (queue !== null && record.target.contains(queue)));
+      if (record.type === 'attributes') {
+        if (!(record.target instanceof Element)) return false;
+        if (record.target === panel || record.target === trigger || record.target === queue) return true;
+        if (panel !== null && record.target.contains(panel) &&
+            (record.attributeName === 'hidden' || record.attributeName === 'aria-hidden' ||
+             !record.target.contains(this.overlay))) return true;
+        return false;
+      }
       return [...record.addedNodes, ...record.removedNodes].some(node =>
         node instanceof Element && (node.matches(selector) || node.querySelector(selector)));
     })) this.schedule();
@@ -113,12 +119,15 @@ export class TrackPanel {
     this.schedule();
   }
 
-  setArtwork(image: HTMLImageElement | null) {
+  setArtwork(image: HTMLImageElement | null, loading = false) {
+    this.hasArtwork = !!image;
+    this.artworkLoading = loading;
     if (image) {
       image.alt = '';
       this.cover.replaceChildren(image);
-    } else this.cover.replaceChildren();
-    this.hasArtwork = !!image;
+    } else {
+      this.cover.replaceChildren();
+    }
     this.schedule();
   }
 
@@ -143,36 +152,48 @@ export class TrackPanel {
     this.observer.disconnect();
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.frame = null;
+    this.lastAppliedProps.clear();
+  }
+
+  private lastAppliedProps = new Map<string, string>();
+
+  private setOverlayProperty(name: string, value: string) {
+    if (this.lastAppliedProps.get(name) !== value) {
+      this.lastAppliedProps.set(name, value);
+      this.overlay.style.setProperty(name, value);
+    }
   }
 
   private schedule() {
     if (!this.mounted) return;
-    this.nowPlayingState = getNowPlayingState(this.nowPlayingState);
     if (this.frame !== null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
+      if (!this.mounted) return;
+      this.nowPlayingState = getNowPlayingState(this.nowPlayingState);
       const { width, height } = this.overlay.getBoundingClientRect();
       const measuredZoom = getWindowZoom();
       const zoom = this.fullscreen && (measuredZoom < 0.25 || measuredZoom > 5) ? 1 : measuredZoom;
       const artworkColumn = this.fullscreen && width < 680 ? Math.min(120, Math.max(90, width * 0.2)) : width * 0.28 * zoom;
       const lyricWidth = width * 0.75 - artworkColumn;
       // Reserve a readable lyric column and room below the square cover for metadata.
-      const visible = this.fullscreen || this.hasArtwork && this.hasTitle &&
+      const visible = this.fullscreen || (this.hasArtwork || this.artworkLoading) && this.hasTitle &&
         width >= 1120 && height >= 480 && lyricWidth >= 480 && this.nowPlayingState === 'hidden';
-      this.overlay.style.setProperty('--ll-window-zoom', `${zoom}`);
-      this.overlay.style.setProperty('--ll-artwork-column-width', `${artworkColumn}px`);
-      this.overlay.style.setProperty('--ll-view-height', `${height}px`);
+      this.setOverlayProperty('--ll-window-zoom', `${zoom}`);
+      this.setOverlayProperty('--ll-artwork-column-width', `${artworkColumn}px`);
+      this.setOverlayProperty('--ll-view-height', `${height}px`);
       const coverSize = Math.min(artworkColumn, height * 0.45 * zoom);
-      this.overlay.style.setProperty('--ll-fullscreen-scale', `${this.fullscreen && width >= 680 ? Math.max(1, coverSize / 320) : 1}`);
+      this.setOverlayProperty('--ll-fullscreen-scale', `${this.fullscreen && width >= 680 ? Math.max(1, coverSize / 320) : 1}`);
       const referenceWidth = this.getNoCoverReferenceWidth(width);
       const referenceCoverSize = Math.min(referenceWidth * 0.28, height * 0.45) * zoom;
-      this.overlay.style.setProperty('--ll-view-width', `${width}px`);
-      this.overlay.style.setProperty('--ll-cover-size', `${Math.max(0, coverSize)}px`);
-      this.overlay.style.setProperty('--ll-artwork-lyric-size', `${Math.max(28, coverSize * 0.115)}px`);
-      this.overlay.style.setProperty('--ll-lyric-size', `${Math.max(28, referenceCoverSize * 0.115)}px`);
+      this.setOverlayProperty('--ll-view-width', `${width}px`);
+      this.setOverlayProperty('--ll-cover-size', `${Math.max(0, coverSize)}px`);
+      this.setOverlayProperty('--ll-artwork-lyric-size', `${Math.max(28, coverSize * 0.115)}px`);
+      this.setOverlayProperty('--ll-lyric-size', `${Math.max(28, referenceCoverSize * 0.115)}px`);
       this.overlay.classList.toggle('ll-with-track', visible);
       this.element.hidden = !visible;
-      if (this.fullscreen && !this.hasArtwork) {
+      this.cover.classList.toggle('ll-cover-loading', this.artworkLoading && !this.hasArtwork && visible);
+      if (this.fullscreen && !this.hasArtwork && !this.artworkLoading) {
         this.cover.setAttribute('role', 'img');
         this.cover.setAttribute('aria-label', 'Album artwork unavailable');
       } else {
