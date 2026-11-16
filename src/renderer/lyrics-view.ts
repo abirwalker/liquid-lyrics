@@ -7,6 +7,7 @@ import { getSongwriters, isRecord } from '../types/types';
 import { TrackPanel } from './track-panel';
 import { FullscreenControls } from './fullscreen-controls';
 import { getNoLyricsMessage, resetNoLyricsMessage } from '../storage/no-lyrics';
+import { logger } from '../utils/logger';
 
 const PROVIDER_CREDITS = new Map([
   ['binilyrics', 'BiniLyrics · Binimum'],
@@ -45,10 +46,8 @@ class CreditsLyricPlayer extends DomLyricPlayer {
         return;
       }
     }
-    if (reason === LayoutReason.ConfigChange || this.size[0] !== this.lastContainerWidth || this.size[1] !== this.lastContainerHeight) {
-      if (this.size[0] !== this.lastContainerWidth) {
-        this.lastBuiltWidth = 0;
-      }
+    if (this.size[0] !== this.lastContainerWidth || this.size[1] !== this.lastContainerHeight) {
+      this.lastBuiltWidth = 0;
       this.lastContainerWidth = this.size[0];
       this.lastContainerHeight = this.size[1];
       this.cachedFooterOffset = null;
@@ -598,7 +597,7 @@ export class LyricsView {
       this.trackPanel.setArtwork(null, false);
       if (this.background) {
         this.background.getElement().dataset.ready = 'false';
-        this.pruneStaleBackgroundMeshes(1);
+        this.pruneStaleBackgroundMeshes(0);
       }
       return;
     }
@@ -608,11 +607,19 @@ export class LyricsView {
 
   private pruneStaleBackgroundMeshes(keepCount = 1) {
     const bg = this.background as any;
-    if (Array.isArray(bg?.meshStates) && bg.meshStates.length > keepCount) {
-      const stale = bg.meshStates.splice(0, bg.meshStates.length - keepCount);
-      for (const state of stale) {
-        state.mesh?.dispose?.();
-        state.texture?.dispose?.();
+    if (Array.isArray(bg?.meshStates)) {
+      if (bg.meshStates.length > keepCount) {
+        const stale = bg.meshStates.splice(0, bg.meshStates.length - keepCount);
+        for (const state of stale) {
+          state.mesh?.dispose?.();
+          state.texture?.dispose?.();
+        }
+      }
+      if (keepCount === 1 && bg.meshStates.length === 1) {
+        const remaining = bg.meshStates[0];
+        if (typeof remaining?.alpha === 'number' && remaining.alpha < 1) {
+          remaining.alpha = 1;
+        }
       }
     }
   }
@@ -635,24 +642,33 @@ export class LyricsView {
         if (version !== this.artworkVersion) return;
         this.pruneStaleBackgroundMeshes(1);
         await background.setAlbum(image);
-        if (version !== this.artworkVersion) return;
+        if (version !== this.artworkVersion || !this.isOpen) {
+          this.pruneStaleBackgroundMeshes(1);
+          if (!this.isOpen) background.pause();
+          return;
+        }
         this.pruneStaleBackgroundMeshes(2);
         background.getElement().dataset.ready = 'true';
         background.resume();
         background.setStaticMode(this.reducedMotion.matches || !globalThis.Spicetify?.Player.isPlaying());
         if (!this.isOpen) background.pause();
+        setTimeout(() => {
+          if (version === this.artworkVersion) {
+            this.pruneStaleBackgroundMeshes(1);
+          }
+        }, 1200);
       }).catch((error: unknown) => {
         if (version !== this.artworkVersion) return;
         this.artworkRequestVersion = -1;
         background.getElement().dataset.ready = 'false';
-        console.warn('[Liquid Lyrics] Artwork rendering failed:', error);
+        logger.warn('[Liquid Lyrics] Artwork rendering failed:', error);
       });
     }).catch((error: unknown) => {
       if (version !== this.artworkVersion) return;
       this.artworkRequestVersion = -1;
       this.trackPanel.setArtwork(null, false);
       if (background) background.getElement().dataset.ready = 'false';
-      console.warn('[Liquid Lyrics] Artwork unavailable:', error);
+      logger.warn('[Liquid Lyrics] Artwork unavailable:', error);
     });
   }
 
@@ -705,7 +721,7 @@ export class LyricsView {
     // A blocked browser API still leaves a usable full-window lyrics view.
     if (this.overlay.requestFullscreen) void this.overlay.requestFullscreen().then(() => {
       if (!this.fullscreen && document.fullscreenElement === this.overlay) void document.exitFullscreen();
-    }).catch(error => console.info('[Liquid Lyrics] Using full-window mode:', error));
+    }).catch(error => logger.info('[Liquid Lyrics] Using full-window mode:', error));
   }
 
   private onFullscreenChange = () => {
@@ -719,7 +735,7 @@ export class LyricsView {
     document.body.style.overflow = this.bodyOverflow;
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     if (document.fullscreenElement === this.overlay) void document.exitFullscreen().catch(error =>
-      console.warn('[Liquid Lyrics] Full-screen exit failed:', error));
+      logger.warn('[Liquid Lyrics] Full-screen exit failed:', error));
     this.fullscreenControls?.dispose();
     this.fullscreenControls?.element.remove();
     this.fullscreenControls?.exitButton.remove();
@@ -778,7 +794,7 @@ export class LyricsView {
         this.background.setStaticMode(this.reducedMotion.matches);
         this.overlay.prepend(canvas);
       } catch (error) {
-        console.warn('[Liquid Lyrics] Background unavailable:', error);
+        logger.warn('[Liquid Lyrics] Background unavailable:', error);
       }
     }
     this.loadArtwork();
@@ -860,6 +876,14 @@ export class LyricsView {
     this.callbacks.onVisibilityChange(false);
   }
 
+  public dispose() {
+    this.unmount();
+    this.pruneStaleBackgroundMeshes(0);
+    this.background?.dispose();
+    this.background = null;
+    this.player.dispose();
+  }
+
   public getIsVisible() {
     return this.requestedOpen;
   }
@@ -922,8 +946,12 @@ export class LyricsView {
       }
       const playing = spotifyPlayer.isPlaying();
       if (playing !== this.lastPlaying) {
-        if (playing) this.player.resume();
-        else this.player.pause();
+        if (playing) {
+          (this.player as any).seekDetector?.reset();
+          this.player.resume();
+        } else {
+          this.player.pause();
+        }
         this.background?.setStaticMode(!playing || this.reducedMotion.matches);
         this.background?.resume();
         this.lastPlaying = playing;
@@ -932,8 +960,11 @@ export class LyricsView {
         this.animFrameId = requestAnimationFrame(this.onFrame);
         return;
       }
-      const progress = this.getProgress();
+      let progress = this.getProgress();
       const seeking = this.lastProgress === null || Math.abs(progress - this.lastProgress) > 1000;
+      if (playing && !seeking && this.lastProgress !== null && progress < this.lastProgress && this.lastProgress - progress < 200) {
+        progress = this.lastProgress;
+      }
       const progressChanged = progress !== this.lastProgress;
       if (playing || seeking || progressChanged) {
         this.player.setCurrentTime(progress, seeking);

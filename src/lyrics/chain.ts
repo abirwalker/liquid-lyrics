@@ -1,4 +1,5 @@
-﻿import type { LyricsProvider, LyricsQuery, LyricsResult } from '../types/types';
+import { logger } from '../utils/logger';
+import type { LyricsProvider, LyricsQuery, LyricsResult } from '../types/types';
 import { hasCollapsedTiming, isValidResult, normalizeCollapsedTiming } from '../types/types';
 import { createLyricsPlusProvider } from './providers/lyricsplus';
 import { createBiniLyricsProvider } from './providers/binilyrics';
@@ -19,7 +20,14 @@ function lyricQuality(result: LyricsResult | null): number {
 }
 
 type ProviderOutcome = 'unavailable' | 'invalid' | 'instrumental' | 'static' | 'line' | 'word' | 'error';
-type ProviderAttempt = { provider: string; outcome: ProviderOutcome; elapsedMs: number };
+type ProviderAttempt = {
+  provider: string;
+  outcome: ProviderOutcome;
+  elapsedMs: number;
+  lines?: number;
+  error?: string;
+  result?: LyricsResult;
+};
 
 async function runLyricsChain(
   query: LyricsQuery,
@@ -27,14 +35,19 @@ async function runLyricsChain(
   signal?: AbortSignal,
   stopOnLine = false,
   record?: (attempt: ProviderAttempt) => void,
+  probeAll = false,
 ): Promise<LyricsResult | null> {
   let best: LyricsResult | null = null;
   for (const provider of providers) {
     if (signal?.aborted) return null;
     const started = performance.now();
-    const report = (outcome: ProviderOutcome) => record?.({
-      provider: provider.id, outcome, elapsedMs: Math.round(performance.now() - started),
-    });
+    const report = (outcome: ProviderOutcome, extra?: Pick<ProviderAttempt, 'lines' | 'error' | 'result'>) =>
+      record?.({
+        provider: provider.id,
+        outcome,
+        elapsedMs: Math.round(performance.now() - started),
+        ...extra,
+      });
     try {
       const result = await provider.fetch(query, signal);
       if (signal?.aborted) return null;
@@ -44,11 +57,14 @@ async function runLyricsChain(
       }
       const normalized = normalizeCollapsedTiming(result);
       const quality = lyricQuality(normalized);
-      report(quality === 3 ? 'word' : quality === 2 ? 'line' : quality === 1 ? 'static' : 'instrumental');
-      if (quality === 3 || (stopOnLine && quality === 2)) return normalized;
+      const outcome: ProviderOutcome =
+        quality === 3 ? 'word' : quality === 2 ? 'line' : quality === 1 ? 'static' : 'instrumental';
+      report(outcome, probeAll ? { lines: normalized.lines.length, result: normalized } : undefined);
+      if (!probeAll && (quality === 3 || (stopOnLine && quality === 2))) return normalized;
       if (quality > lyricQuality(best)) best = normalized;
-    } catch {
-      report('error');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      report('error', probeAll ? { error: message } : undefined);
       continue;
     }
   }
@@ -84,18 +100,36 @@ export async function fetchLyrics(
   const cleanQ = createCleanQuery(query);
   const { primary, fallback } = createProviderTiers();
   const providers = [...primary, ...fallback];
-  const attempts: Array<ProviderAttempt & { query: 'original' | 'cleaned' }> = [];
+  const probeAll = Boolean(query.probeAll);
+  const attempts: Array<{ provider: string; outcome: ProviderOutcome; elapsedMs: number; query: 'original' | 'cleaned' }> = [];
+  const probeEntries: Array<ProviderAttempt & { query: 'original' | 'cleaned' }> = [];
+  const recordAttempt = (variant: 'original' | 'cleaned') => (attempt: ProviderAttempt) => {
+    attempts.push({
+      provider: attempt.provider,
+      outcome: attempt.outcome,
+      elapsedMs: attempt.elapsedMs,
+      query: variant,
+    });
+    if (probeAll) probeEntries.push({ ...attempt, query: variant });
+  };
   const reportPath = (selected: LyricsResult | null) => {
-    if (attempts.length <= 1 || signal?.aborted) return;
-    console.info('[Liquid Lyrics] Provider path:', {
+    if (signal?.aborted) return;
+    if (probeAll) {
+      logger.info('[Liquid Lyrics] Provider probe:', {
+        song: query.song, selected: selected?.source ?? null, providers: probeEntries,
+      });
+      return;
+    }
+    if (attempts.length <= 1) return;
+    logger.info('[Liquid Lyrics] Provider path:', {
       song: query.song, selected: selected?.source ?? null, attempts,
     });
   };
   const fetchPreferred = async (candidate: LyricsQuery, variant: 'original' | 'cleaned'): Promise<LyricsResult | null> => {
-    const record = (attempt: ProviderAttempt) => attempts.push({ ...attempt, query: variant });
-    const preferred = await runLyricsChain(candidate, primary, signal, false, record);
-    if (signal?.aborted || lyricQuality(preferred) >= 2) return preferred;
-    const fallbackResult = await runLyricsChain(candidate, fallback, signal, true, record);
+    const record = recordAttempt(variant);
+    const preferred = await runLyricsChain(candidate, primary, signal, false, record, probeAll);
+    if (signal?.aborted || (!probeAll && lyricQuality(preferred) >= 2)) return preferred;
+    const fallbackResult = await runLyricsChain(candidate, fallback, signal, !probeAll, record, probeAll);
     return lyricQuality(fallbackResult) > lyricQuality(preferred) ? fallbackResult : preferred;
   };
   const readCache = async (candidate: LyricsQuery) => {
@@ -112,7 +146,7 @@ export async function fetchLyrics(
   };
 
   let cachedFallback: LyricsResult | null = null;
-  if (!query.skipCache && cache) {
+  if (!query.skipCache && !probeAll && cache) {
     const cached = await readCache(query);
     if (cached.hit && cached.result) {
       if (lyricQuality(cached.result) === 3) return { ...cached.result, cached: true };
@@ -125,8 +159,8 @@ export async function fetchLyrics(
   if (signal?.aborted) return null;
 
   if (lyricQuality(result) < 2 && cleanQ) {
-    const record = (attempt: ProviderAttempt) => attempts.push({ ...attempt, query: 'cleaned' });
-    const cleanResult = await runLyricsChain(cleanQ, fallback.filter(provider => provider.id !== 'spotify'), signal, true, record);
+    const record = recordAttempt('cleaned');
+    const cleanResult = await runLyricsChain(cleanQ, fallback.filter(provider => provider.id !== 'spotify'), signal, !probeAll, record, probeAll);
     if (signal?.aborted) return null;
     if (lyricQuality(cleanResult) > lyricQuality(result)) result = cleanResult;
   }

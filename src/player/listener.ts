@@ -1,5 +1,10 @@
 import type { LyricsQuery, LyricsResult } from '../types/types';
 import { getSongwriters } from '../types/types';
+import { logger as defaultLogger } from '../utils/logger';
+export interface LyricsLogger {
+  info(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+}
 
 export function extractQuery(item: unknown): LyricsQuery | null {
   if (!item || typeof item !== 'object') return null;
@@ -60,15 +65,6 @@ export function extractQuery(item: unknown): LyricsQuery | null {
   };
 }
 
-export interface LyricsLogger {
-  info(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
-}
-
-const defaultLogger: LyricsLogger = {
-  info: (msg, ...args) => console.log(msg, ...args),
-  error: (msg, ...args) => console.error(msg, ...args),
-};
 
 export interface LyricsControllerOptions {
   logger?: LyricsLogger;
@@ -133,12 +129,15 @@ export function createLyricsController(
     publish({ ...state, result: { ...state.result, songwriters } });
   }
 
-  async function onTrackChange(item: unknown) {
+  async function loadTrack(
+    item: unknown,
+    options: { force?: boolean; skipCache?: boolean; probeAll?: boolean } = {},
+  ): Promise<LyricsResult | null> {
     const raw = item as Record<string, any> | null;
     const uri = typeof raw?.uri === 'string' ? raw.uri : null;
 
-    if (uri && uri === activeUri) {
-      return;
+    if (!options.force && uri && uri === activeUri) {
+      return null;
     }
 
     if (activeAbort) {
@@ -148,17 +147,21 @@ export function createLyricsController(
 
     activeUri = uri;
 
-    const query = extractQuery(item);
+    const extracted = extractQuery(item);
+    const query: LyricsQuery | null = extracted && (options.skipCache || options.probeAll)
+      ? { ...extracted, ...(options.skipCache ? { skipCache: true } : {}), ...(options.probeAll ? { probeAll: true } : {}) }
+      : extracted;
     const abort = query ? new AbortController() : null;
     activeAbort = abort;
     publish({ item, query, status: query ? 'loading' : 'idle', result: null, error: null });
     callbacks.onTrackChangeStarted?.(item, query);
 
     if (!query || !abort || abort.signal.aborted || activeAbort !== abort) {
-      return;
+      return null;
     }
 
-    logger.info(`[Liquid Lyrics] Track changed: ${query.artist} - ${query.song}`);
+    const actionLabel = options.force ? 'Refetching track' : 'Track changed';
+    logger.info(`[Liquid Lyrics] ${actionLabel}: ${query.artist} - ${query.song}`);
     logger.info('[Liquid Lyrics] Fetching lyrics for:', {
       song: query.song,
       artist: query.artist,
@@ -169,7 +172,7 @@ export function createLyricsController(
 
     try {
       const result = await fetcher(query, abort.signal);
-      if (abort.signal.aborted) return;
+      if (abort.signal.aborted) return null;
 
       if (!result) {
         logger.info(`[Liquid Lyrics] No lyrics found for "${query.song}" by ${query.artist}`);
@@ -191,6 +194,7 @@ export function createLyricsController(
 
       publish({ item, query, status: result ? 'ready' : 'unavailable', result, error: null });
       if (!abort.signal.aborted) callbacks.onLyricsLoaded?.(result, query);
+      return result;
     } catch (error: any) {
       if (!abort.signal.aborted) {
         logger.error(`[Liquid Lyrics] Error fetching lyrics for "${query.song}":`, error?.message ?? error);
@@ -198,11 +202,21 @@ export function createLyricsController(
           error: error instanceof Error ? error.message : String(error) });
         callbacks.onLyricsLoaded?.(null, query);
       }
+      return null;
     } finally {
       if (activeAbort === abort) {
         activeAbort = null;
       }
     }
+  }
+
+  async function onTrackChange(item: unknown) {
+    await loadTrack(item);
+  }
+
+  async function refetch(item: unknown = state.item, probeAll = true): Promise<LyricsResult | null> {
+    if (!item) return null;
+    return loadTrack(item, { force: true, skipCache: true, probeAll });
   }
 
   function destroy() {
@@ -217,6 +231,7 @@ export function createLyricsController(
 
   return {
     onTrackChange,
+    refetch,
     destroy,
     getActiveUri: () => activeUri,
     getState: () => state,

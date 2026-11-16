@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1] - 2026-11-16
+
+- Apply Apple Liquid Glass styling, active pill states, and tactile press feedback to full-screen controls.
+- Add heart split and monochrome particle burst animations on full-screen Like/Unlike (with async Spotify toggle sync) and capsule icon feedback for Copy Song Link.
+- Improve WebGL background cleanup, pause-jitter playback guards, and isolate dev/prod logging.
+
 ## [1.3.0] - 2026-10-18
 
 - Upgrade to AMLL Core 0.6.0 which provides up to 7x faster playback frames and 20x faster layout passes.
