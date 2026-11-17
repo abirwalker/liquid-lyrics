@@ -5,9 +5,14 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   checks:
@@ -23,6 +28,54 @@ jobs:
       - name: Check release metadata
         run: node scripts/prepare-release.mjs
       - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npx tsc -p tests/tsconfig.json --noEmit
-      - run: npm run build
+      - name: Typecheck source and tests
+        run: |
+          npx tsc --noEmit
+          npx tsc -p tests/tsconfig.json --noEmit
+      - name: Run static AST, CSS, and script audit
+        run: npm run check
+      - name: Build production bundle
+        run: npm run build
+      - name: Verify built bundle
+        run: node scripts/ci-audit.mjs --bundle
+      - name: Run lyrics adapter tests (Chrome)
+        run: npm run test:lyrics
+      - name: Upload lyrics test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lyrics-test-diagnostics
+          path: |
+            logs/adapter-tests/
+            !logs/adapter-tests/browser-*/
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Write CI summary
+        if: always()
+        run: node scripts/ci-audit.mjs --summary
+
+  renderer:
+    name: Renderer (Chrome, non-blocking)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Animation-timing checks on a GPU-less runner are still proving stable; they report without blocking merges.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Run renderer and UI tests (Chrome)
+        run: npm run test:renderer
+      - name: Upload renderer diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: renderer-test-diagnostics
+          path: |
+            logs/renderer-tests/
+            !logs/renderer-tests/chrome-*/
+          retention-days: 7
+          if-no-files-found: ignore

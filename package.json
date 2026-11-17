@@ -6,6 +6,7 @@
     "dev": "spicetify-creator dev",
     "build": "spicetify-creator build",
     "postbuild": "node scripts/prepare-marketplace.mjs",
+    "check": "node scripts/ci-audit.mjs --source",
     "version": "npm run build",
     "test:lyrics": "node scripts/test-lyrics.mjs",
     "test:renderer": "node scripts/test-renderer.mjs"
