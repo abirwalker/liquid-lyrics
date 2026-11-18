@@ -55,11 +55,9 @@ jobs:
         run: node scripts/ci-audit.mjs --summary
 
   renderer:
-    name: Renderer (Chrome, non-blocking)
+    name: Renderer (Chrome)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    # Animation-timing checks on a GPU-less runner are still proving stable; they report without blocking merges.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
