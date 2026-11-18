@@ -411,6 +411,19 @@ try {
   assert.equal(await evaluate("document.querySelector('#liquid-lyrics-overlay') === null"), true);
   await evaluate('fixture.view.mount(); fixture.view.setLyrics(fixture.fixture())');
   await wait(200);
+  for (const [setup, label] of [
+    [`const field=document.createElement('input');field.className='escape-probe';document.body.append(field);field.focus();
+      field.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`, 'search field outside lyrics'],
+    [`const menu=document.createElement('ul');menu.className='escape-probe';menu.setAttribute('role','menu');menu.append(document.createElement('li'));
+      document.body.append(menu);menu.firstChild.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`, 'Spotify context menu'],
+    [`document.addEventListener('keydown',event=>event.preventDefault(),{once:true});
+      document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))`, 'Escape already handled'],
+    [`document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,isComposing:true}))`, 'IME composition'],
+  ]) {
+    await evaluate(setup);
+    assert.equal(await evaluate('fixture.view.getIsVisible()'), true, `Escape from ${label} keeps lyrics open`);
+  }
+  await evaluate("document.querySelectorAll('.escape-probe').forEach(element => element.remove())");
   await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape'}))");
   assert.equal(await evaluate('fixture.view.getIsVisible()'), false);
   await evaluate("document.querySelector('.Root__main-view').className = 'missing'; document.querySelector('main').className = ''; fixture.view.mount(); fixture.view.unmount(); document.querySelector('main').className = 'main-view-container'; document.querySelector('.missing').className = 'Root__main-view'");
@@ -1070,7 +1083,8 @@ try {
   await wait(150); await untilArtwork(true);
   assert.equal(await artworkVisible(),true,'fullscreen retains artwork space when image is unavailable');
   assert.ok(await evaluate(`document.querySelector('.ll-fullscreen-timeline').getBoundingClientRect().height>0`),'missing artwork does not hide playback');
-  await evaluate(`fixture.view.exitFullscreen()`);
+  await evaluate(`document.querySelector('.ll-fullscreen-timeline input').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+  assert.equal(await evaluate(`!!document.querySelector('.ll-fullscreen')`),false,'Escape inside the full screen dialog exits it');
   assert.equal(await evaluate(`document.querySelector('.ll-player')===mainPlayerBefore && !!document.querySelector('.main-view-container > #liquid-lyrics-overlay')`),true,'restores original main player');
   assert.equal(await evaluate(`document.querySelectorAll('.ll-fullscreen-controls').length`),0,'controls cleaned up');
   await evaluate(`fixture.view.unmount(); fixture.view.enterFullscreen(); window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));`);
