@@ -20,7 +20,7 @@ export async function findManualCopies(ownSource: string | null): Promise<string
     const file = manualFileName(source);
     if (!file || source === ownSource || files.has(file)) continue;
     try {
-      if ((await (await fetch(script.src)).text()).includes(BUNDLE_MARKER)) files.add(file);
+      if ((await (await fetch(script.src, { signal: AbortSignal.timeout(5000) })).text()).includes(BUNDLE_MARKER)) files.add(file);
     } catch (error) {
       logger.warn(`[Liquid Lyrics] Could not read extension ${file}:`, error);
     }
