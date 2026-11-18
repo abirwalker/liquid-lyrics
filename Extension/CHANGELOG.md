@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.2] - 2026-11-18
+
+- Find word-synced lyrics for songs whose artist is listed in another script on BiniLyrics, such as Cruel World by Holly Humberstone, when the title, album and length all match.
+- Escape now closes Spotify's search box, context menus and panels first; the lyrics view closes on the next press.
+- Keep the lyrics cache working after a slow start, so replayed songs load from cache instead of refetching until Spotify restarts.
+
 ## [1.3.1] - 2026-11-16
 
 - Apply Apple Liquid Glass styling, active pill states, and tactile press feedback to full-screen controls.

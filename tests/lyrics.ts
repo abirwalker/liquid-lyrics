@@ -1032,6 +1032,28 @@ export async function runBoundaryChecks() {
     check(!(await oldCache.get({ ...featured, spotifyId: 'charli' })).hit,
       'Legacy memory and persistent ID entries cannot retain poisoned recording selections');
 
+    const factory = indexedDB as IDBFactory & { open: IDBFactory['open'] };
+    const realOpen = factory.open.bind(factory);
+    factory.open = (name: string, version?: number) => {
+      const request = realOpen(name, version);
+      const slow = { result: null as IDBDatabase | null, onupgradeneeded: null as (() => void) | null,
+        onsuccess: null as (() => void) | null, onerror: null as (() => void) | null };
+      request.onupgradeneeded = () => { slow.result = request.result; slow.onupgradeneeded?.(); };
+      request.onsuccess = () => setTimeout(() => { slow.result = request.result; slow.onsuccess?.(); }, 800);
+      request.onerror = () => slow.onerror?.();
+      return slow as unknown as IDBOpenDBRequest;
+    };
+    const slowEntry = { key: 'v2:slow-open', result: fromLRC('lyricsplus', '[00:01]Slow open')!,
+      cachedAt: Date.now(), expiresAt: Date.now() + 60000 };
+    const slowStorage = new IndexedDbStorage();
+    await slowStorage.set(slowEntry);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await slowStorage.set(slowEntry);
+    factory.open = realOpen;
+    check((await new IndexedDbStorage().get(slowEntry.key))?.key === slowEntry.key,
+      'A slow IndexedDB open skips only the calls that time out, not the whole session');
+    await new IndexedDbStorage().delete(slowEntry.key);
+
     // Cache boundary checks
     check(normalizeString('  Glass  Animals ') === 'glass animals', 'Cache key normalization');
     const cacheKeys = getCacheKeys({ song: 'Heat Waves', artist: 'Glass Animals', spotifyId: '123' });

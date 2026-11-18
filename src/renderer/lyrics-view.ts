@@ -403,12 +403,21 @@ export class LyricsView {
           focusable[event.shiftKey ? focusable.length - 1 : 0].focus();
         }
       }
-      if (event.key === 'Escape' && this.requestedOpen) {
+      if (event.key === 'Escape' && this.requestedOpen && !event.defaultPrevented &&
+          !event.isComposing && !this.escapeBelongsOutside(event.target)) {
         if (this.fullscreen) this.exitFullscreen();
         else this.callbacks.onClose();
       }
     });
     this.reducedMotion.addEventListener('change', () => this.applyMotionPreference());
+  }
+
+  // Spotify's search box, context menus and dialogs use Escape to dismiss themselves;
+  // closing the lyrics as well would undo the user's place for a key meant elsewhere.
+  private escapeBelongsOutside(target: EventTarget | null): boolean {
+    if (!(target instanceof Element) || this.overlay.contains(target)) return false;
+    return target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), ' +
+      '[role="menu"], [role="dialog"], [role="listbox"]') !== null;
   }
 
   private seekToLine(time: number) {

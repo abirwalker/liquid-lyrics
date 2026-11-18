@@ -88,15 +88,26 @@ const DB_VERSION = 1;
 const STORE_NAME = 'lyrics';
 
 export class IndexedDbStorage {
-  private dbPromise: Promise<IDBDatabase | null> | null = null;
+  private opening: Promise<IDBDatabase | null> | null = null;
 
   private async getDb(): Promise<IDBDatabase | null> {
     if (typeof indexedDB === 'undefined') return null;
-    if (this.dbPromise) return this.dbPromise;
+    this.opening ??= this.open();
 
-    this.dbPromise = new Promise((resolve) => {
+    // A cold open can take longer than a lyrics lookup should wait. Skip the cache for
+    // this call only; the open keeps running so later calls use the database.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>(resolve => { timer = setTimeout(resolve, 500, null); });
+    try {
+      return await Promise.race([this.opening, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private open(): Promise<IDBDatabase | null> {
+    return new Promise((resolve) => {
       try {
-        const timer = setTimeout(() => resolve(null), 500);
         const req = indexedDB.open(DB_NAME, DB_VERSION);
         req.onupgradeneeded = () => {
           const db = req.result;
@@ -105,20 +116,12 @@ export class IndexedDbStorage {
             store.createIndex('cachedAt', 'cachedAt', { unique: false });
           }
         };
-        req.onsuccess = () => {
-          clearTimeout(timer);
-          resolve(req.result);
-        };
-        req.onerror = () => {
-          clearTimeout(timer);
-          resolve(null);
-        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
       } catch {
         resolve(null);
       }
     });
-
-    return this.dbPromise;
   }
 
   async get(key: string): Promise<CacheEntry | null> {

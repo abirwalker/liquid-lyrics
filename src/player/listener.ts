@@ -68,7 +68,6 @@ export function extractQuery(item: unknown): LyricsQuery | null {
 
 export interface LyricsControllerOptions {
   logger?: LyricsLogger;
-  onTrackChangeStarted?: (item: unknown, query: LyricsQuery | null) => void;
   onLyricsLoaded?: (result: LyricsResult | null, query: LyricsQuery) => void;
 }
 
@@ -154,7 +153,6 @@ export function createLyricsController(
     const abort = query ? new AbortController() : null;
     activeAbort = abort;
     publish({ item, query, status: query ? 'loading' : 'idle', result: null, error: null });
-    callbacks.onTrackChangeStarted?.(item, query);
 
     if (!query || !abort || abort.signal.aborted || activeAbort !== abort) {
       return null;
@@ -233,7 +231,6 @@ export function createLyricsController(
     onTrackChange,
     refetch,
     destroy,
-    getActiveUri: () => activeUri,
     getState: () => state,
     subscribe,
     setSongwriters,
