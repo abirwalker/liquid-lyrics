@@ -37,7 +37,18 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx tsc -p tests/tsconfig.json --noEmit
+      - name: Run static AST, CSS, and script audit
+        run: npm run check
       - run: npm run build
+      # Marketplace installs the committed bundle while this release uploads the rebuilt one; they must be the same file.
+      - name: Check committed build matches source
+        run: git diff --exit-code --stat -- Extension/Build manifest.json
+      - name: Verify built bundle
+        run: node scripts/ci-audit.mjs --bundle
+      - name: Run lyrics adapter tests (Chrome)
+        run: npm run test:lyrics
+      - name: Run renderer and UI tests (Chrome)
+        run: npm run test:renderer
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

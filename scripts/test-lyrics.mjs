@@ -1,24 +1,16 @@
 import { build } from 'esbuild';
-import { spawn } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import http from 'node:http';
+import { annotateFailuresOnCi, launchHeadlessChrome, stopChrome } from './lib/chrome.mjs';
 
+annotateFailuresOnCi('Lyrics adapter tests');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const staged = process.argv.includes('--staged');
 const fixtures = process.argv.includes('--fixtures');
 const outputDirectory = resolve(root, 'logs/adapter-tests');
 await mkdir(outputDirectory, { recursive: true });
-const candidates = [process.env.LYRICS_TEST_BROWSER,
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  '/usr/bin/chromium', '/usr/bin/google-chrome'].filter(Boolean);
-let browser;
-for (const candidate of candidates) {
-  try { await access(candidate); browser = candidate; break; } catch { continue; }
-}
-if (!browser) throw new Error('Set LYRICS_TEST_BROWSER to an installed Chromium browser executable.');
 const result = await build({ entryPoints: [resolve(root, 'tests/lyrics.ts')], bundle: true, write: false,
   format: 'iife', globalName: 'LyricsTests', platform: 'browser',
   plugins: staged ? [{ name: 'staged-source', setup(builder) {
@@ -58,22 +50,10 @@ const server = http.createServer(async (_req, res) => {
   res.end(await readFile(page));
 });
 await new Promise(resolveReady => server.listen(0, '127.0.0.1', resolveReady));
-const chrome = spawn(browser, ['--headless=new', '--no-first-run', '--no-default-browser-check',
-  `--user-data-dir=${profile}`, '--remote-debugging-port=0', 'about:blank'],
-{ windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+const { chrome, endpoint } = await launchHeadlessChrome({ userDataDir: profile });
 let socket;
 let report;
 try {
-  const endpoint = await new Promise((resolveEndpoint, reject) => {
-    let output = '';
-    const timer = setTimeout(() => reject(new Error('Chrome startup timed out')), 15000);
-    chrome.once('error', error => { clearTimeout(timer); reject(error); });
-    chrome.stderr.on('data', chunk => {
-      output += chunk;
-      const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(output);
-      if (match) { clearTimeout(timer); resolveEndpoint(match[1]); }
-    });
-  });
   socket = new WebSocket(endpoint);
   await new Promise((resolveOpen, reject) => {
     socket.addEventListener('open', resolveOpen, { once: true });
@@ -111,9 +91,10 @@ try {
   if (!report) throw new Error('Browser did not return test results.');
 } finally {
   socket?.close();
-  chrome.kill();
+  await stopChrome(chrome);
   server.close();
+  await rm(profile, { recursive: true, force: true }).catch(() => {});
 }
 await writeFile(resolve(outputDirectory, staged ? 'staged-result.json' : 'source-result.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
-if (report.error) process.exitCode = 1;
+if (report.error) throw new Error(`Lyrics adapter suite failed: ${report.error}`);
