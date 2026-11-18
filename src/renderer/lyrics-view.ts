@@ -315,6 +315,7 @@ export class LyricsView {
   private artworkRequestVersion = -1;
   private artworkTask: Promise<void> = Promise.resolve();
   private reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  private readonly events = new AbortController();
   private host: HTMLElement | null = null;
   private hostPosition = '';
   private changedHostPosition = false;
@@ -408,8 +409,8 @@ export class LyricsView {
         if (this.fullscreen) this.exitFullscreen();
         else this.callbacks.onClose();
       }
-    });
-    this.reducedMotion.addEventListener('change', () => this.applyMotionPreference());
+    }, { signal: this.events.signal });
+    this.reducedMotion.addEventListener('change', () => this.applyMotionPreference(), { signal: this.events.signal });
   }
 
   // Spotify's search box, context menus and dialogs use Escape to dismiss themselves;
@@ -886,6 +887,7 @@ export class LyricsView {
   }
 
   public dispose() {
+    this.events.abort();
     this.unmount();
     this.pruneStaleBackgroundMeshes(0);
     this.background?.dispose();

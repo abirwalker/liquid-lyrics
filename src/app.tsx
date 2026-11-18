@@ -1,4 +1,6 @@
 import { isDev, logger } from './utils/logger';
+import { claimInstance, legacyCopyLoaded, originOf, ownSource, releaseInstance, watchForLegacyCopy, type Instance } from './utils/instance';
+import { checkCopies, findManualCopies, isMarkedClean, showManualCopies, showNotice, type CopyReport } from './utils/duplicates';
 import { fetchLyrics } from './lyrics/chain';
 import { createLyricsController, initPlayerListener } from './player/listener';
 import { fetchSpotifySongwriters } from './player/credits';
@@ -8,6 +10,7 @@ import type { LyricsResult } from './types/types';
 declare global {
   interface Window {
     refetchLyrics?: () => Promise<LyricsResult | null>;
+    LiquidLyrics?: { version: string; cleanUp(): Promise<CopyReport> };
   }
 }
 
@@ -29,6 +32,73 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   const spicetify = globalThis.Spicetify;
+  const teardown: Array<() => void> = [];
+  const source = ownSource();
+  const version = __LIQUID_LYRICS_VERSION__;
+  const instance: Instance = {
+    version, origin: originOf(source, isDev), source, cssId: __LIQUID_LYRICS_CSS_ID__, dispose, noticeCopy,
+  };
+  function dispose() {
+    // Newest first, so the player listener stops before the view it feeds is disposed.
+    for (const stop of teardown.splice(0).reverse()) stop();
+    releaseInstance(instance);
+  }
+
+  // A dev build skips the automatic check: its version is the release still being built, which would
+  // remove the Marketplace install the developer is comparing against.
+  let checkTimer: ReturnType<typeof setTimeout> | undefined;
+  let forceCheck = false;
+  teardown.push(() => clearTimeout(checkTimer));
+  function scheduleCheck(force: boolean) {
+    if (isDev) return;
+    forceCheck ||= force;
+    clearTimeout(checkTimer);
+    // Copies finish loading at different times; one check after they settle sees all of them.
+    checkTimer = setTimeout(() => {
+      if (!forceCheck && isMarkedClean(version)) return;
+      forceCheck = false;
+      void checkCopies(version, source).then(report => {
+        if (report.manualFiles.length) showManualCopies(report.manualFiles);
+      });
+    }, 2000);
+  }
+  function noticeCopy(copy: Parameters<Instance['noticeCopy']>[0]) {
+    logger.info('[Liquid Lyrics] Another copy loaded:', copy);
+    scheduleCheck(true);
+  }
+  const cleanUp = async () => {
+    const report = await checkCopies(version, source);
+    if (report.manualFiles.length) showManualCopies(report.manualFiles);
+    else if (report.removed) showNotice('Liquid Lyrics cleaned up', 'Older installs were removed. Restart Spotify to finish.');
+    else showNotice('Liquid Lyrics', 'No other copies found.');
+    return report;
+  };
+  // Available in every build, so a copy the automatic check missed can be removed from DevTools.
+  const exposeCleanUp = () => { window.LiquidLyrics = { version, cleanUp }; };
+
+  const yieldToLegacyCopy = () => {
+    dispose();
+    exposeCleanUp();
+    // A dev build only looks for file copies; the Marketplace install is the one it is compared against.
+    const checking = isDev
+      ? findManualCopies(source).then(manualFiles => ({ removed: 0, manualFiles }))
+      : checkCopies(version, source);
+    void checking.then(report => {
+      if (report.manualFiles.length) showManualCopies(report.manualFiles);
+      else if (isDev) showNotice('Dev build stopped', 'An older Liquid Lyrics is also running.');
+      else if (report.removed) showNotice('Liquid Lyrics updated', 'The older version was removed. Restart Spotify to finish.');
+      else showNotice('Older Liquid Lyrics still running', 'Remove the older copy, then restart Spotify.');
+    });
+  };
+  if (legacyCopyLoaded()) return yieldToLegacyCopy();
+  if (!claimInstance(instance)) return;
+  // A clean check found no old copy installed, so none can load later in the session either.
+  if (!isMarkedClean(version)) teardown.push(watchForLegacyCopy(yieldToLegacyCopy));
+  exposeCleanUp();
+  teardown.push(() => { if (window.LiquidLyrics?.cleanUp === cleanUp) delete window.LiquidLyrics; });
+  scheduleCheck(false);
+  const events = new AbortController();
+  teardown.push(() => events.abort());
 
   const BASE_ROUTE = '/liquid-lyrics';
   let playbarBtn: Spicetify.Button | null = null;
@@ -46,6 +116,7 @@ async function main() {
     toggleElement?.focus();
   };
   const lyricsView = new LyricsView({ onClose: closeLyrics, onVisibilityChange: updateButtonState });
+  teardown.push(() => lyricsView.dispose());
 
   function updateButtonState(isActive: boolean) {
     if (playbarBtn) {
@@ -138,6 +209,7 @@ async function main() {
       }
     });
     observer.observe(document.body, { childList: true, subtree: true });
+    teardown.push(() => observer.disconnect());
   }
 
   injectButtons();
@@ -150,11 +222,11 @@ async function main() {
     event.stopImmediatePropagation();
     lyricsView.enterFullscreen(button);
   };
-  window.addEventListener('click', replaceFullscreen, true);
+  window.addEventListener('click', replaceFullscreen, { capture: true, signal: events.signal });
   window.addEventListener('pagehide', () => {
     window.removeEventListener('click', replaceFullscreen, true);
     lyricsView.unmount();
-  }, { once: true });
+  }, { once: true, signal: events.signal });
 
   if (!toggleElement && spicetify.Playbar?.Button) {
     try {
@@ -176,6 +248,7 @@ async function main() {
     try {
       const topbarBtn = new spicetify.Topbar.Button('Liquid Lyrics', LIQUID_ICON, () => toggleLyrics());
       toggleElement = topbarBtn.button;
+      teardown.push(() => topbarBtn.element.remove());
     } catch (err) {
       logger.warn('[Liquid Lyrics] Topbar button registration failed:', err);
     }
@@ -186,6 +259,10 @@ async function main() {
     toggleElement.setAttribute('aria-label', 'Liquid Lyrics');
     toggleElement.removeAttribute('title');
   }
+  teardown.push(() => {
+    playbarBtn?.deregister();
+    toggleElement?.remove();
+  });
   updateButtonState(false);
   if (history) {
     const syncRoute = () => {
@@ -196,7 +273,8 @@ async function main() {
         lyricsView.unmount();
       }
     };
-    history.listen(syncRoute);
+    const unlisten = history.listen(syncRoute);
+    teardown.push(() => unlisten?.());
     syncRoute();
   }
 
@@ -205,7 +283,7 @@ async function main() {
       e.preventDefault();
       toggleLyrics();
     }
-  });
+  }, { signal: events.signal });
 
   const controller = createLyricsController(fetchLyrics, {
     onLyricsLoaded: (result, query) => {
@@ -240,9 +318,10 @@ async function main() {
   if (isDev && typeof window !== 'undefined') {
     window.refetchLyrics = () =>
       controller.refetch(controller.getState().item ?? spicetify.Player.data?.item, true);
+    teardown.push(() => delete window.refetchLyrics);
   }
 
-  initPlayerListener(controller, spicetify);
+  teardown.push(initPlayerListener(controller, spicetify));
 }
 
 void main().catch((error: unknown) => logger.error('[Liquid Lyrics] Initialization failed:', error));
