@@ -24,10 +24,21 @@ const out = resolve('logs/renderer-tests');
 await mkdir(out, { recursive: true });
 await build({ entryPoints: ['tests/renderer-adapter.test.ts'], bundle: true, platform: 'node', outfile: resolve(out, 'adapter-tests.cjs') });
 await import(pathToFileURL(resolve(out, 'adapter-tests.cjs')).href);
+const buildDefine = version => ({ 'process.env.NODE_ENV': '"production"',
+  __LIQUID_LYRICS_VERSION__: JSON.stringify(version), __LIQUID_LYRICS_CSS_ID__: JSON.stringify(`ll-test-${version}`) });
 await build({ entryPoints: { harness: resolve('tests/renderer-browser.ts'), 'app-harness': resolve('tests/renderer-app.ts') }, bundle: true, outdir: out,
-  format: 'iife', platform: 'browser', define: { 'process.env.NODE_ENV': '"production"' } });
+  format: 'iife', platform: 'browser', define: buildDefine('1.0.0') });
+// Stand-ins for other installed releases booting in the same page.
+const copyVersions = ['0.0.1', '9.9.9'];
+for (const version of copyVersions) {
+  await build({ entryPoints: { [`copy-${version}`]: resolve('src/app.tsx') }, bundle: true, outdir: out,
+    format: 'iife', platform: 'browser', define: buildDefine(version) });
+}
+const served = ['/harness.js', '/harness.css', '/app-harness.js', '/app-harness.css', ...copyVersions.map(version => `/copy-${version}.js`)];
+// Spicetify serves file-installed extensions from /extensions/; this one is renamed on purpose.
+const aliases = { '/extensions/lyricsapp.js': 'copy-0.0.1.js' };
 const server = http.createServer(async (req, res) => {
-  const file = ['/harness.js', '/harness.css', '/app-harness.js', '/app-harness.css'].includes(req.url) ? req.url.slice(1) : null;
+  const file = aliases[req.url] ?? (served.includes(req.url) ? req.url.slice(1) : null);
   res.setHeader('Content-Type', file?.endsWith('.js') ? 'text/javascript' : file ? 'text/css' : 'text/html');
   const entry = req.url.startsWith('/app') ? 'app-harness' : 'harness';
   res.end(file ? await readFile(resolve(out, file)) : `<!doctype html><link rel="stylesheet" href="/${entry}.css"><body><script src="/${entry}.js"></script></body>`);
@@ -1224,6 +1235,103 @@ try {
   assert.equal(await evaluate(`document.querySelectorAll('.ll-fullscreen-controls').length`),1,'replacement button works without duplicate controls');
   await evaluate(`appFixture.history.push('/')`);
   assert.equal(await evaluate(`document.querySelector('#liquid-lyrics-overlay')===null`),true,'route change cleans fullscreen');
+  // Updating from Marketplace leaves the older release installed under its own path, in localStorage
+  // (older Marketplace) or IndexedDB (newer Marketplace).
+  const appUrl = `http://127.0.0.1:${server.address().port}/app?modern`;
+  const installKey = version => `marketplace:installed:abirwalker/liquid-lyrics/Extension/Build/v${version}/liquid-lyrics.js`;
+  // A fixed-path install keeps its install-time version while loading the newest build, so it must stay.
+  const fixedInstall = 'marketplace:installed:abirwalker/liquid-lyrics/Extension/liquid-lyrics.js';
+  const installs = [installKey('0.9.0'), installKey('1.0.0'), installKey('2.0.0'), fixedInstall, 'marketplace:installed:someone/other/other.js'];
+  const record = key => key === fixedInstall ? JSON.stringify({ manifest: { version: '0.1.0' } }) : '{}';
+  await evaluate(`(async () => {
+    const keys = ${JSON.stringify(installs)};
+    localStorage.removeItem('liquid-lyrics:clean-version');
+    localStorage.setItem('marketplace:installed-extensions', JSON.stringify(keys));
+    const records = ${JSON.stringify(Object.fromEntries(installs.map(key => [key, record(key)])))};
+    for (const key of keys) localStorage.setItem(key, records[key]);
+    const opening = indexedDB.open('spicetify-marketplace', 20);
+    opening.onupgradeneeded = () => opening.result.createObjectStore('settings', { keyPath: 'key' });
+    const db = await new Promise(resolve => { opening.onsuccess = () => resolve(opening.result); });
+    const writing = db.transaction('settings', 'readwrite');
+    writing.objectStore('settings').put({ key: 'marketplace:installed-extensions', value: JSON.stringify(keys) });
+    for (const key of keys) writing.objectStore('settings').put({ key, value: records[key] });
+    await new Promise(resolve => { writing.oncomplete = resolve; });
+    db.close();
+  })()`);
+  const readInstalls = `(async () => {
+    const opening = indexedDB.open('spicetify-marketplace');
+    const db = await new Promise(resolve => { opening.onsuccess = () => resolve(opening.result); });
+    const reading = db.transaction('settings').objectStore('settings').getAll();
+    const records = await new Promise(resolve => { reading.onsuccess = () => resolve(reading.result); });
+    db.close();
+    return JSON.stringify({
+      localList: JSON.parse(localStorage.getItem('marketplace:installed-extensions')),
+      localRecords: ${JSON.stringify(installs)}.filter(key => localStorage.getItem(key) !== null),
+      dbList: JSON.parse(records.find(record => record.key === 'marketplace:installed-extensions').value),
+      dbRecords: records.map(record => record.key).filter(key => key !== 'marketplace:installed-extensions'),
+    });
+  })()`;
+  const cleanVersion = "localStorage.getItem('liquid-lyrics:clean-version')";
+  await command('Page.navigate', { url: appUrl });
+  await until("document.querySelectorAll('.ll-toggle').length === 1 && !!globalThis.Spicetify?.Player?.data");
+  await until(`(${readInstalls}).then(state => !state.includes('v0.9.0'))`);
+  const kept = installs.slice(1);
+  assert.deepEqual(JSON.parse(await evaluate(readInstalls)), { localList: kept, localRecords: kept, dbList: kept, dbRecords: kept },
+    'older Liquid Lyrics installs are removed; current, newer, fixed-path and other extensions stay');
+  assert.equal(await evaluate(cleanVersion), null, 'a check that removed something runs again next start');
+  await command('Page.navigate', { url: appUrl });
+  await until(`${cleanVersion} === '1.0.0'`);
+  assert.equal(await evaluate(cleanVersion), '1.0.0', 'a check that finds nothing is remembered');
+
+  // Marketplace treats each release path as a separate install, so several copies can boot in one page.
+  await command('Page.navigate', { url: appUrl });
+  await until("document.querySelectorAll('.ll-toggle').length === 1 && !!globalThis.Spicetify?.Player?.data");
+  const addStyle = version => evaluate(`document.head.append(Object.assign(document.createElement('style'), { id: 'll-test-${version}' }))`);
+  const loadCopy = async (version, path = `/copy-${version}.js`) => {
+    await addStyle(version);
+    await evaluate(`new Promise((resolve, reject) => document.body.append(Object.assign(document.createElement('script'),
+      { src: '${path}', onload: resolve, onerror: reject })))`);
+  };
+  const running = () => evaluate("[document.querySelectorAll('.ll-toggle').length, window.LiquidLyrics?.version].join()");
+  const hasStyle = version => evaluate(`!!document.getElementById('ll-test-${version}')`);
+  await addStyle('1.0.0');
+  await until("document.querySelectorAll('#liquid-lyrics-overlay').length === 1");
+  await loadCopy('0.0.1');
+  assert.equal(await running(), '1,1.0.0', 'older copy does not start beside a newer one');
+  assert.equal(await hasStyle('0.0.1'), false, 'older copy removes its own styles');
+  assert.equal(await hasStyle('1.0.0'), true, 'running copy keeps its styles');
+  await loadCopy('9.9.9');
+  assert.equal(await running(), '1,9.9.9', 'newer copy replaces the running one');
+  assert.equal(await hasStyle('1.0.0'), false, 'replaced copy takes its styles with it');
+  await until("document.querySelectorAll('#liquid-lyrics-overlay').length === 1");
+  assert.equal(await evaluate("document.querySelectorAll('#liquid-lyrics-overlay').length"), 1, 'one lyrics view after takeover');
+  assert.equal(await evaluate('appFixture.playerListenerCount()'), 1, 'replaced copy stops listening to the player');
+  await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, altKey: true }))");
+  assert.equal(await evaluate("document.querySelector('.ll-toggle').getAttribute('aria-pressed')"), 'false', 'shortcut toggles one copy');
+  assert.equal(await evaluate("document.querySelector('#liquid-lyrics-overlay')"), null, 'shortcut closes the only view');
+  // A copy installed from a renamed file is still recognised, and the user gets the command to remove it.
+  await loadCopy('0.0.1', '/extensions/lyricsapp.js');
+  assert.equal(await running(), '1,9.9.9', 'file-installed older copy does not start');
+  await until('appFixture.modals.length > 0', 100, 100);
+  assert.ok((await evaluate('appFixture.modals.join()')).includes('spicetify config extensions lyricsapp.js-'),
+    'renamed file copy gets its remove command');
+  assert.equal(await evaluate('appFixture.modals.length'), 1, 'remove command shown once');
+
+  // v1.3.2 and older cannot be stopped; their style element is the sign one has loaded.
+  await evaluate("localStorage.removeItem('liquid-lyrics:clean-version')");
+  await command('Page.navigate', { url: appUrl });
+  await until("document.querySelectorAll('.ll-toggle').length === 1 && !!globalThis.Spicetify?.Player?.data");
+  await addStyle('1.0.0');
+  await evaluate("document.head.append(Object.assign(document.createElement('style'), { id: 'liquid-lyrics-styles' }))");
+  await until("document.querySelectorAll('.ll-toggle').length === 0 && appFixture.modals.length > 0");
+  assert.equal(await evaluate("document.querySelector('#liquid-lyrics-overlay')"), null, 'copy steps aside for an older unguarded copy');
+  assert.ok((await evaluate('appFixture.modals[0]')).includes('Older Liquid Lyrics still running'), 'user is told about the old copy');
+  assert.equal(await hasStyle('1.0.0'), false, 'stepped-aside copy removes its styles');
+  assert.equal(await evaluate("Symbol.for('liquid-lyrics.instance') in globalThis"), false, 'stepped-aside copy leaves the registry');
+  assert.equal(await evaluate('typeof window.LiquidLyrics?.cleanUp'), 'function', 'manual clean-up stays available');
+  await loadCopy('9.9.9');
+  assert.equal(await evaluate("document.querySelectorAll('.ll-toggle').length"), 0, 'no copy starts while an unguarded one runs');
+  assert.equal(await evaluate('appFixture.playerListenerCount()'), 0, 'no player listeners left behind');
   assert.equal(errors.length, 0, 'no runtime exceptions');
   for (const report of reports) {
     assert.ok(report.player.left >= report.host.left && report.player.right <= report.host.right, 'player inside host');

@@ -9,7 +9,10 @@ const history = {
   location: { pathname: '/liquid-lyrics' },
   push(path: string) { this.location.pathname = path; listeners.forEach(listener => listener()); },
   goBack() { this.push('/'); },
-  listen(listener: () => void) { listeners.push(listener); return () => {}; },
+  listen(listener: () => void) {
+    listeners.push(listener);
+    return () => { if (listeners.includes(listener)) listeners.splice(listeners.indexOf(listener), 1); };
+  },
 };
 class Button {
   element = document.createElement('button');
@@ -41,6 +44,7 @@ function mountControls(kind: 'modern' | 'legacy' | 'alternate' = 'modern') {
 }
 if (parameters.has('modern')) mountControls();
 if (parameters.has('legacy')) mountControls('legacy');
+const modals: string[] = [];
 const playerEvents = new Map<string, Array<(event?: unknown) => void>>();
 const creditRequests = new Map<string, (response: unknown) => void>();
 if (parameters.has('credits')) {
@@ -68,7 +72,9 @@ setTimeout(() => {
     Player: { data: {}, getProgress: () => parameters.has('credits') ? 1500 : 0, getDuration: () => 0, isPlaying: () => false,
       seek: () => {}, addEventListener: (event, callback) => {
         playerEvents.set(event, [...playerEvents.get(event) ?? [], callback]);
-      }, removeEventListener: () => {} },
+      }, removeEventListener: (event, callback) => {
+        playerEvents.set(event, (playerEvents.get(event) ?? []).filter(listener => listener !== callback));
+      } },
     GraphQL: parameters.has('credits') ? {
       Definitions: { queryTrackCreditsGroupedModal: { name: 'Synthetic definition' } },
       Request: (_definition, variables) => new Promise(resolve => {
@@ -76,6 +82,12 @@ setTimeout(() => {
       }),
     } : undefined,
     showNotification: () => {},
+    PopupModal: {
+      display: ({ title, content }: { title: string; content: Element | string }) => {
+        modals.push(`${title}: ${typeof content === 'string' ? content : content.textContent ?? ''}`);
+      },
+      hide: () => {},
+    },
     Tippy: (element, options) => { (element as HTMLElement).dataset.tooltip = String(options.content); },
     Platform: parameters.has('fallback') ? undefined : { History: history },
     Playbar: parameters.has('topbar') ? undefined : { Button },
@@ -85,6 +97,8 @@ setTimeout(() => {
 Object.assign(window, { appFixture: { history, registrations, registerCalls: () => registerCalls,
   mountControls,
   creditRequests,
+  modals,
+  playerListenerCount: () => playerEvents.get('songchange')?.length ?? 0,
   changeTrack: (id: string, name = 'Fixture', details: Spicetify.PlayerItem = {}) => {
     globalThis.Spicetify!.Player.data!.item = { uri: `spotify:track:${id}`, name,
       artists: [{ name: 'Fixture Artist' }], duration: { milliseconds: 6000 }, ...details };

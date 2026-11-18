@@ -68,7 +68,7 @@ declare namespace Spicetify {
       Request?: (definition: unknown, variables: Record<string, string | number>) => Promise<unknown>;
     };
     Player: PlayerAPI;
-    showNotification(message: string, isError?: boolean): void;
+    showNotification(message: string, isError?: boolean, msTimeout?: number): void;
     Platform?: {
       History?: HistoryAPI;
       RequestBuilder?: {
@@ -87,6 +87,7 @@ declare namespace Spicetify {
       };
     };
     Tippy?: (element: Element, options: Record<string, unknown>) => unknown;
+    PopupModal?: { display(options: { title: string; content: Element | string; isLarge?: boolean }): void; hide(): void };
     TippyProps?: Record<string, unknown> & { default?: Record<string, unknown> };
   }
 }
