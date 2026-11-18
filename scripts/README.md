@@ -1,6 +1,19 @@
-# Building and releasing
+# Building, testing and releasing
 
 `npm run build` creates the extension. Its postbuild hook runs prepare-marketplace.mjs, which generates manifest.json and Extension/Build/v<version>/liquid-lyrics.js from package.json.
+
+## Checks and tests
+
+Pull requests to master must pass the `Checks` and `Renderer (Chrome)` jobs. Run the same checks locally before pushing:
+
+| Command | Checks |
+| --- | --- |
+| `npx tsc --noEmit` and `npx tsc -p tests/tsconfig.json --noEmit` | Source and test types |
+| `npm run check` | Source audit: AST, CSS and script rules (ci-audit.mjs) |
+| `npm run test:lyrics` | Lyrics provider adapters in headless Chrome |
+| `npm run test:renderer` | Lyrics view, full screen and controls in headless Chrome |
+
+The browser suites use an installed Chrome, Chromium or Edge; set `LYRICS_TEST_BROWSER` to its path if none is found. Output and screenshots go to `logs/adapter-tests/` and `logs/renderer-tests/`. On CI, a failing run lists every failed check in the job annotation and uploads these folders as an artifact.
 
 ## Choose a version
 
