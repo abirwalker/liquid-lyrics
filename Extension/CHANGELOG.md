@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.3] - 2026-11-18
+
+- Run only one copy of Liquid Lyrics at a time, so updating from Marketplace no longer leaves the older version loading beside the new one.
+- Remove older Liquid Lyrics installs from Marketplace automatically; restart Spotify once to finish.
+- Show the commands to remove an extra copy installed from a file, even when it was renamed.
+
 ## [1.3.2] - 2026-11-18
 
 - Find word-synced lyrics for songs whose artist is listed in another script on BiniLyrics, such as Cruel World by Holly Humberstone, when the title, album and length all match.
