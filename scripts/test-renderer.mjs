@@ -441,8 +441,13 @@ try {
     assert.ok(firstReport.lines[0].rect.top >= firstReport.player.top, 'first line visible');
   }
   await command('Emulation.setEmulatedMedia', { features: [{name:'prefers-reduced-motion', value:'reduce'}] });
-  await wait(700);
-  const filters = await evaluate("[...document.querySelectorAll('.FmKaba_lyricLineWrapper')].map(el => getComputedStyle(el).filter)");
+  const lineFilters = () => evaluate("[...document.querySelectorAll('.FmKaba_lyricLineWrapper')].map(el => getComputedStyle(el).filter)");
+  let filters = await lineFilters();
+  // Existing blur fades out through AMLL's 0.4s filter transition, which a slow runner stretches past any fixed wait.
+  for (let tries = 0; tries < 60 && !filters.every(filter => filter === 'none'); tries++) {
+    await wait(50);
+    filters = await lineFilters();
+  }
   assert.ok(filters.every(filter => filter === 'none'), `reduced motion has no blur: ${filters}`);
   assert.equal(await evaluate("getComputedStyle(document.querySelector('[data-bottom-line=true]')).transitionDuration"),
     '0s', 'reduced motion disables the credits transition');
