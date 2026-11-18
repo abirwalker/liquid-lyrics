@@ -2,9 +2,11 @@ import type { LyricsProvider, LyricsQuery, LyricsResult } from '../../types/type
 import { hasSyncedLyrics, isRecord } from '../../types/types';
 import { fromTTML } from '../formats';
 import { cleanTitle, getPrimaryArtist } from '../cleaner';
-import { scoreCandidate } from './matching';
+import { normalizeMatchText, scoreCandidate, titleArtistCredits } from './matching';
 
 const BINILYRICS_API = 'https://lyrics-api.binimum.org';
+const LATIN = /\p{Script=Latin}/u;
+const RELEASE_SUFFIX = /\s+(?:[-–—]\s*(?:single|ep)|\((?:single|ep)\))\s*$/i;
 
 interface BiniItem {
   track_name?: string;
@@ -38,6 +40,20 @@ export function createBiniSearchPlan(query: LyricsQuery): BiniSearchPlan | null 
   return { song, artist };
 }
 
+// Regional catalogs can list a Latin-script artist in katakana or hangul, which no
+// name comparison can bridge. Accept that only for a solo recording whose exact
+// title, release and length all agree, and rank it below every real artist match.
+function isTransliteratedSoloMatch(query: LyricsQuery, item: BiniItem): boolean {
+  const artist = item.artist_name ?? '';
+  if (LATIN.test(artist) || !/\p{L}/u.test(artist) || !LATIN.test(query.artist)) return false;
+  if (/[,;&/]|\b(?:feat|ft|with)\b/i.test(query.artist) || titleArtistCredits(query.song).length) return false;
+  const release = (album: string | undefined) => normalizeMatchText(album?.replace(RELEASE_SUFFIX, ''));
+  if (!query.album || !item.album_name || release(query.album) !== release(item.album_name)) return false;
+  if (normalizeMatchText(query.song) !== normalizeMatchText(item.track_name)) return false;
+  return typeof query.durationMs === 'number' && typeof item.duration === 'number' &&
+    Math.abs(query.durationMs - item.duration * 1000) <= 2000;
+}
+
 export function selectBiniItems(
   values: unknown[],
   query: LyricsQuery,
@@ -49,7 +65,8 @@ export function selectBiniItems(
     titles: [item.track_name ?? ''], artists: [item.artist_name ?? ''],
     albums: item.album_name ? [item.album_name] : [],
     durationMs: typeof item.duration === 'number' ? item.duration * 1000 : undefined,
-  }), mixed: mixMarker.test(item.track_name ?? '') || mixMarker.test(item.album_name ?? '') }));
+  }) ?? (isTransliteratedSoloMatch(query, item) ? 0 : null),
+  mixed: mixMarker.test(item.track_name ?? '') || mixMarker.test(item.album_name ?? '') }));
   return scored.filter((entry): entry is { item: BiniItem; score: number; mixed: boolean } =>
     entry.score !== null && (requestedMix || !entry.mixed))
     .sort((a, b) => b.score - a.score).map(entry => entry.item);

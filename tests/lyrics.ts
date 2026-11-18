@@ -172,6 +172,30 @@ export async function runBoundaryChecks() {
   check(selectBiniItems([{ track_name: '芒种', artist_name: '音阙诗听', duration: 175,
     lyricsUrl: 'https://example.com/a.ttml' }], cjkQuery).length === 0,
     'A matching duration cannot substitute for a missing collaborator in catalog metadata');
+  const cruelWorld = { track_name: 'Cruel World', artist_name: 'ホリー・ハンバーストーン', album_name: 'Cruel World',
+    duration: 207, isrc: 'GBUM72506604', timing_type: 'word', lyricsUrl: 'https://lrc.red/s/GBUM72506604.ttml' };
+  const cruelWorldEp = { track_name: 'it’s a real Cruel World', artist_name: 'ホリー・ハンバーストーン',
+    album_name: 'it’s a real Cruel World - EP', duration: 207, isrc: 'GBUM72601769', timing_type: 'line',
+    lyricsUrl: 'https://lrc.red/s/GBUM72601769.ttml' };
+  const cruelQuery = { song: 'Cruel World', artist: 'Holly Humberstone', album: 'Cruel World', durationMs: 206600 };
+  check(selectBiniItems([cruelWorldEp, cruelWorld], cruelQuery).map(item => item.isrc).join() === 'GBUM72506604',
+    'A katakana catalog artist matches a solo recording with identical title, album and length');
+  check(selectBiniItems([{ ...cruelWorld, album_name: 'Cruel World - Single' }], cruelQuery).length === 1,
+    'A transliterated match tolerates a single-release suffix');
+  for (const [mismatch, item, query] of [
+    ['album', { ...cruelWorld, album_name: 'Paint My Bedroom Black' }, cruelQuery],
+    ['length', { ...cruelWorld, duration: 210 }, cruelQuery],
+    ['missing Spotify album', cruelWorld, { ...cruelQuery, album: undefined }],
+    ['missing Spotify length', cruelWorld, { ...cruelQuery, durationMs: undefined }],
+    ['collaboration', cruelWorld, { ...cruelQuery, artist: 'Holly Humberstone, Someone Else' }],
+    ['featured title', cruelWorld, { ...cruelQuery, song: 'Cruel World (feat. Someone Else)' }],
+    ['different Latin artist', { ...cruelWorld, artist_name: 'Someone Else' }, cruelQuery],
+  ] as const) {
+    check(selectBiniItems([item], query).length === 0, `A transliterated artist is rejected on ${mismatch} mismatch`);
+  }
+  check(selectBiniItems([cruelWorld, { ...cruelWorld, artist_name: 'Holly Humberstone', isrc: 'latin-fixture' }], cruelQuery)
+    .map(item => item.isrc).join() === 'latin-fixture,GBUM72506604',
+    'A real artist match ranks above a transliterated one');
   const lyricsPlusFixture = { type: 'Word', metadata: { title: 'Test', artist: 'Artist', totalDuration: '3:20' },
     lyrics: [{ time: 1000, duration: 700, text: 'Hello world', syllabus: [
       { time: 1000, duration: 300, text: 'Hello ' }, { time: 1300, duration: 400, text: 'world' },
