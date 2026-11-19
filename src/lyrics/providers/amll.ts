@@ -2,9 +2,9 @@ import type { LyricsProvider, LyricsQuery, LyricsResult } from '../../types/type
 import { hasSyncedLyrics, isRecord } from '../../types/types';
 import { fromTTML } from '../formats';
 import { scoreCandidate } from './matching';
+import { fetchFrom, ProviderUnavailable } from './request';
 
 const API = 'https://api.amll.dev/v1/lyrics';
-const unavailable = new Error('AMLL unavailable');
 
 interface AmllItem {
   id?: number | string;
@@ -32,8 +32,7 @@ function itemScore(query: LyricsQuery, item: AmllItem): number | null {
 async function request(url: string, signal?: AbortSignal): Promise<unknown> {
   const timeout = AbortSignal.timeout(5000);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  const response = await fetch(url, { signal: requestSignal, credentials: 'omit' });
-  if (response.status === 429 || response.status >= 500) throw unavailable;
+  const response = await fetchFrom('amll', url, { signal: requestSignal, credentials: 'omit' }, signal);
   return response.ok ? response.json() : null;
 }
 
@@ -54,13 +53,17 @@ export function createAmllProvider(): LyricsProvider {
         staticFallback ??= result;
         return null;
       };
+      const stopAfterOutage = (error: ProviderUnavailable) => {
+        if (staticFallback) return staticFallback;
+        throw error;
+      };
 
       if (query.spotifyId?.trim()) {
         try {
           const exact = accept(await getItem(new URLSearchParams({ spotifyId: query.spotifyId.trim() }), signal));
           if (exact || signal?.aborted) return exact;
         } catch (error) {
-          if (error === unavailable) return staticFallback;
+          if (error instanceof ProviderUnavailable) return stopAfterOutage(error);
           if (signal?.aborted) return null;
         }
       }
@@ -86,12 +89,12 @@ export function createAmllProvider(): LyricsProvider {
             const result = accept(await getItem(itemParams, signal));
             if (result) return result;
           } catch (error) {
-            if (error === unavailable) return staticFallback;
+            if (error instanceof ProviderUnavailable) return stopAfterOutage(error);
             if (signal?.aborted) return null;
           }
         }
       } catch (error) {
-        if (error === unavailable) return staticFallback;
+        if (error instanceof ProviderUnavailable) return stopAfterOutage(error);
         if (signal?.aborted) return null;
       }
       return staticFallback;

@@ -3,6 +3,7 @@ import { hasSyncedLyrics, isRecord } from '../../types/types';
 import { fromTTML } from '../formats';
 import { cleanTitle, getPrimaryArtist } from '../cleaner';
 import { normalizeMatchText, scoreCandidate, titleArtistCredits } from './matching';
+import { fetchFrom, ProviderUnavailable, rethrowIfUnreachable } from './request';
 
 const BINILYRICS_API = 'https://lyrics-api.binimum.org';
 const LATIN = /\p{Script=Latin}/u;
@@ -85,15 +86,16 @@ export function createBiniLyricsProvider(): LyricsProvider {
       lookup.searchParams.set('track', plan.song);
       lookup.searchParams.set('artist', plan.artist);
       let found: unknown[];
+      const searchDeadline = AbortSignal.any([requestSignal, AbortSignal.timeout(5000)]);
       try {
-        const deadline = AbortSignal.any([requestSignal, AbortSignal.timeout(5000)]);
-        const response = await fetch(lookup, { signal: deadline, credentials: 'omit' });
+        const response = await fetchFrom('binilyrics', lookup, { signal: searchDeadline, credentials: 'omit' }, signal);
         if (!response.ok) return null;
         const body: unknown = await response.json();
         const results = isRecord(body) ? body.results : null;
         if (!Array.isArray(results)) return null;
         found = results;
-      } catch {
+      } catch (error) {
+        rethrowIfUnreachable('binilyrics', error, searchDeadline, signal);
         return null;
       }
 
@@ -104,7 +106,7 @@ export function createBiniLyricsProvider(): LyricsProvider {
       let attempted = 0;
 
       for (const item of selectBiniItems(found, query)) {
-        if (requestSignal.aborted) return null;
+        if (requestSignal.aborted) break;
         let url: URL;
         try {
           url = new URL(item.lyricsUrl ?? '');
@@ -119,30 +121,30 @@ export function createBiniLyricsProvider(): LyricsProvider {
         const deadline = AbortSignal.any([requestSignal, AbortSignal.timeout(5000)]);
         let lyricsResponse: Response;
         try {
-          lyricsResponse = await fetch(url, { signal: deadline, credentials: 'omit' });
+          lyricsResponse = await fetchFrom('binilyrics', url, { signal: deadline, credentials: 'omit' }, signal);
         } catch {
-          if (requestSignal.aborted) return null;
-          failedOrigins.add(url.origin);
-          continue;
-        }
-        if (lyricsResponse.status === 429 || lyricsResponse.status >= 500) {
+          if (requestSignal.aborted) break;
           failedOrigins.add(url.origin);
           continue;
         }
         if (!lyricsResponse.ok) continue;
         try {
           const result = adaptBiniLyrics(await lyricsResponse.text());
-          if (requestSignal.aborted) return null;
+          if (requestSignal.aborted) break;
           if (result) {
             if (result.lines.some(line => line.timing === 'word')) return result;
             if (hasSyncedLyrics(result)) lineFallback ??= result;
             else staticFallback ??= result;
           }
         } catch {
-          if (requestSignal.aborted) return null;
+          if (requestSignal.aborted) break;
         }
       }
-      return lineFallback ?? staticFallback;
+      if (signal?.aborted) return null;
+      const best = lineFallback ?? staticFallback;
+      // The search found the song, so a lyric file that failed to download is an outage, not a miss.
+      if (best || (!failedOrigins.size && !requestSignal.aborted)) return best;
+      throw new ProviderUnavailable('binilyrics', 'lyric files could not be downloaded');
     },
   };
 }

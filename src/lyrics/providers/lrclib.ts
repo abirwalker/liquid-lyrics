@@ -2,6 +2,7 @@ import type { LyricsProvider, LyricsQuery, LyricsResult } from '../../types/type
 import { hasSyncedLyrics, isRecord } from '../../types/types';
 import { fromLRC, fromPlain } from '../formats';
 import { scoreCandidate } from './matching';
+import { fetchFrom, rethrowIfUnreachable } from './request';
 import { version } from '../../../package.json';
 
 const LRCLIB_API = 'https://lrclib.net/api';
@@ -16,9 +17,9 @@ function matchItem(query: LyricsQuery, item: Record<string, unknown>): number | 
   });
 }
 
-async function request(url: string, signal?: AbortSignal): Promise<Response> {
-  const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);
-  return fetch(url, { signal: deadline, credentials: 'omit', headers: HEADERS });
+async function request(url: string, requestSignal: AbortSignal, callerSignal?: AbortSignal): Promise<Response> {
+  const deadline = AbortSignal.any([requestSignal, AbortSignal.timeout(5000)]);
+  return fetchFrom('lrclib', url, { signal: deadline, credentials: 'omit', headers: HEADERS }, callerSignal);
 }
 
 export function adaptLrclib(body: unknown, durationMs?: number): LyricsResult | null {
@@ -42,8 +43,7 @@ export function createLrclibProvider(): LyricsProvider {
       const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
       let fallback: LyricsResult | null = null;
       try {
-        const response = await request(`${LRCLIB_API}/get?${params}`, requestSignal);
-        if (response.status === 429 || response.status >= 500) return null;
+        const response = await request(`${LRCLIB_API}/get?${params}`, requestSignal, signal);
         if (response.ok) {
           const body: unknown = await response.json();
           const needsArtistValidation = /[,;&]|\b(?:feat|ft|with)\b/i.test(artist) ||
@@ -54,17 +54,16 @@ export function createLrclibProvider(): LyricsProvider {
           fallback = result;
           if (result?.instrumental) return result;
         }
-      } catch {
-        if (requestSignal.aborted) return null;
-        return fallback;
+      } catch (error) {
+        rethrowIfUnreachable('lrclib', error, requestSignal, signal);
+        return null;
       }
 
       const searchParams = new URLSearchParams({ track_name: song, artist_name: artist });
       for (const search of [searchParams]) {
         if (requestSignal.aborted) return null;
         try {
-          const response = await request(`${LRCLIB_API}/search?${search}`, requestSignal);
-          if (response.status === 429 || response.status >= 500) return fallback;
+          const response = await request(`${LRCLIB_API}/search?${search}`, requestSignal, signal);
           if (!response.ok) continue;
           const body: unknown = await response.json();
           if (!Array.isArray(body)) continue;
@@ -76,9 +75,9 @@ export function createLrclibProvider(): LyricsProvider {
             if (result && hasSyncedLyrics(result)) return result;
             fallback ??= result;
           }
-        } catch {
-          if (requestSignal.aborted) return null;
-          return fallback;
+        } catch (error) {
+          if (!fallback) rethrowIfUnreachable('lrclib', error, requestSignal, signal);
+          return signal?.aborted ? null : fallback;
         }
       }
       return fallback;
