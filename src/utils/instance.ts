@@ -32,9 +32,9 @@ export function compareVersions(a: string, b: string) {
 }
 
 // The stack names the file this code was loaded from; document.currentScript is already null
-// after the async startup.
+// after the async startup. File names can contain brackets, as in a second download "liquid-lyrics (1).js".
 export function ownSource(): string | null {
-  const url = new Error().stack?.match(/(https?:\/\/[^\s)]+?):\d+:\d+/)?.[1];
+  const url = new Error().stack?.match(/(https?:\/\/\S+?):\d+:\d+(?:\)|$)/m)?.[1];
   return url ? url.split(/[?#]/)[0] : null;
 }
 
@@ -42,7 +42,7 @@ export function ownSource(): string | null {
 export function manualFileName(source: string | null): string | null {
   if (!source) return null;
   try {
-    const file = new URL(source).pathname.match(/\/extensions\/([^/]+\.m?js)$/)?.[1];
+    const file = new URL(source).pathname.match(/\/extensions\/([^/]+\.m?js)$/i)?.[1];
     return file ? decodeURIComponent(file) : null;
   } catch {
     return null;
@@ -83,15 +83,17 @@ export function claimInstance(instance: Instance): boolean {
     current.noticeCopy(describe(instance));
     return false;
   }
+  // Registered before the old copy shuts down, so its release sees a successor and keeps a style
+  // element they share when both are the same build.
+  registry[KEY] = instance;
   if (current) {
     try {
       current.dispose();
     } catch (error) {
       logger.warn('[Liquid Lyrics] Older copy did not shut down cleanly:', error);
     }
+    instance.noticeCopy(describe(current));
   }
-  registry[KEY] = instance;
-  if (current) instance.noticeCopy(describe(current));
   return true;
 }
 

@@ -31,12 +31,18 @@ await build({ entryPoints: { harness: resolve('tests/renderer-browser.ts'), 'app
 // Stand-ins for other installed releases booting in the same page.
 const copyVersions = ['0.0.1', '9.9.9'];
 for (const version of copyVersions) {
+  // Like the release build, the style element is added at the end, after the code that starts the app.
+  const injectStyle = `(()=>{const id=${JSON.stringify(`ll-test-${version}`)};document.getElementById(id)||document.head.append(Object.assign(document.createElement('style'),{id}))})();`;
   await build({ entryPoints: { [`copy-${version}`]: resolve('src/app.tsx') }, bundle: true, outdir: out,
-    format: 'iife', platform: 'browser', define: buildDefine(version) });
+    format: 'iife', platform: 'browser', define: buildDefine(version), footer: { js: injectStyle } });
 }
 const served = ['/harness.js', '/harness.css', '/app-harness.js', '/app-harness.css', ...copyVersions.map(version => `/copy-${version}.js`)];
-// Spicetify serves file-installed extensions from /extensions/; this one is renamed on purpose.
-const aliases = { '/extensions/lyricsapp.js': 'copy-0.0.1.js' };
+// Spicetify serves file-installed extensions from /extensions/, under whatever name the user gave the file.
+const aliases = {
+  '/extensions/lyricsapp.js': 'copy-0.0.1.js',
+  '/extensions/LyricsApp.JS': 'copy-0.0.1.js',
+  '/extensions/liquid-lyrics%20(1).js': 'copy-9.9.9.js',
+};
 const server = http.createServer(async (req, res) => {
   const file = aliases[req.url] ?? (served.includes(req.url) ? req.url.slice(1) : null);
   res.setHeader('Content-Type', file?.endsWith('.js') ? 'text/javascript' : file ? 'text/css' : 'text/html');
@@ -1287,11 +1293,8 @@ try {
   await command('Page.navigate', { url: appUrl });
   await until("document.querySelectorAll('.ll-toggle').length === 1 && !!globalThis.Spicetify?.Player?.data");
   const addStyle = version => evaluate(`document.head.append(Object.assign(document.createElement('style'), { id: 'll-test-${version}' }))`);
-  const loadCopy = async (version, path = `/copy-${version}.js`) => {
-    await addStyle(version);
-    await evaluate(`new Promise((resolve, reject) => document.body.append(Object.assign(document.createElement('script'),
-      { src: '${path}', onload: resolve, onerror: reject })))`);
-  };
+  const loadCopy = (version, path = `/copy-${version}.js`) => evaluate(`new Promise((resolve, reject) =>
+    document.body.append(Object.assign(document.createElement('script'), { src: '${path}', onload: resolve, onerror: reject })))`);
   const running = () => evaluate("[document.querySelectorAll('.ll-toggle').length, window.LiquidLyrics?.version].join()");
   const hasStyle = version => evaluate(`!!document.getElementById('ll-test-${version}')`);
   await addStyle('1.0.0');
@@ -1309,6 +1312,13 @@ try {
   await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, altKey: true }))");
   assert.equal(await evaluate("document.querySelector('.ll-toggle').getAttribute('aria-pressed')"), 'false', 'shortcut toggles one copy');
   assert.equal(await evaluate("document.querySelector('#liquid-lyrics-overlay')"), null, 'shortcut closes the only view');
+  // The same build from Marketplace replaces a file copy; both use one style element. *.localhost resolves
+  // to this machine, and a githubusercontent host marks a Marketplace copy.
+  await loadCopy('9.9.9', `http://githubusercontent.localhost:${server.address().port}/copy-9.9.9.js`);
+  assert.equal(await evaluate("globalThis[Symbol.for('liquid-lyrics.instance')]?.origin"), 'marketplace', 'Marketplace copy replaces the same build');
+  assert.equal(await running(), '1,9.9.9', 'one copy runs after a same-build takeover');
+  assert.equal(await hasStyle('9.9.9'), true, 'same-build takeover keeps the shared styles');
+  assert.equal(await evaluate('appFixture.playerListenerCount()'), 1, 'same-build takeover leaves one player listener');
   // A copy installed from a renamed file is still recognised, and the user gets the command to remove it.
   await loadCopy('0.0.1', '/extensions/lyricsapp.js');
   assert.equal(await running(), '1,9.9.9', 'file-installed older copy does not start');
@@ -1317,8 +1327,24 @@ try {
     'renamed file copy gets its remove command');
   assert.equal(await evaluate('appFixture.modals.length'), 1, 'remove command shown once');
 
-  // v1.3.2 and older cannot be stopped; their style element is the sign one has loaded.
+  // A second download is saved as "liquid-lyrics (1).js"; as the only file copy it must not report itself.
   await evaluate("localStorage.removeItem('liquid-lyrics:clean-version')");
+  await command('Page.navigate', { url: appUrl });
+  await until("document.querySelectorAll('.ll-toggle').length === 1 && !!globalThis.Spicetify?.Player?.data");
+  await addStyle('1.0.0');
+  await loadCopy('9.9.9', '/extensions/liquid-lyrics%20(1).js');
+  assert.equal(await evaluate("globalThis[Symbol.for('liquid-lyrics.instance')]?.source?.endsWith('/extensions/liquid-lyrics%20(1).js')"), true,
+    'copy finds its own file when the name has brackets');
+  await until(`${cleanVersion} === '9.9.9'`, 100, 100);
+  assert.equal(await evaluate('appFixture.modals.length'), 0, 'a single file copy is not reported as installed twice');
+  await loadCopy('0.0.1', '/extensions/LyricsApp.JS');
+  await until('appFixture.modals.length > 0', 100, 100);
+  assert.ok((await evaluate('appFixture.modals.join()')).includes('spicetify config extensions LyricsApp.JS-'),
+    'file copy with an uppercase extension is found');
+
+  // v1.3.2 and older cannot be stopped; their style element is the sign one has loaded. They are
+  // watched for even after a clean check, since one can be installed later.
+  await evaluate("localStorage.setItem('liquid-lyrics:clean-version', '1.0.0')");
   await command('Page.navigate', { url: appUrl });
   await until("document.querySelectorAll('.ll-toggle').length === 1 && !!globalThis.Spicetify?.Player?.data");
   await addStyle('1.0.0');
@@ -1331,6 +1357,7 @@ try {
   assert.equal(await evaluate('typeof window.LiquidLyrics?.cleanUp'), 'function', 'manual clean-up stays available');
   await loadCopy('9.9.9');
   assert.equal(await evaluate("document.querySelectorAll('.ll-toggle').length"), 0, 'no copy starts while an unguarded one runs');
+  assert.equal(await hasStyle('9.9.9'), false, 'copy that steps aside on load leaves no styles behind');
   assert.equal(await evaluate('appFixture.playerListenerCount()'), 0, 'no player listeners left behind');
   assert.equal(errors.length, 0, 'no runtime exceptions');
   for (const report of reports) {

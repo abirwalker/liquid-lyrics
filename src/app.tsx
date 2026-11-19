@@ -27,6 +27,9 @@ const LIQUID_ICON = `
 `;
 
 async function main() {
+  // The release build injects its CSS after the call that starts this function. Yielding once lets
+  // that run first, so a copy that stops below can still remove its own styles.
+  await Promise.resolve();
   while (!globalThis.Spicetify?.showNotification || !globalThis.Spicetify?.Player?.data ||
     (!globalThis.Spicetify.Playbar?.Button && !globalThis.Spicetify.Topbar?.Button)) {
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -92,8 +95,9 @@ async function main() {
   };
   if (legacyCopyLoaded()) return yieldToLegacyCopy();
   if (!claimInstance(instance)) return;
-  // A clean check found no old copy installed, so none can load later in the session either.
-  if (!isMarkedClean(version)) teardown.push(watchForLegacyCopy(yieldToLegacyCopy));
+  // Watched even when marked clean: an old copy can be installed after the check, and watching the
+  // head's direct children costs almost nothing.
+  teardown.push(watchForLegacyCopy(yieldToLegacyCopy));
   exposeCleanUp();
   teardown.push(() => { if (window.LiquidLyrics?.cleanUp === cleanUp) delete window.LiquidLyrics; });
   scheduleCheck(false);
