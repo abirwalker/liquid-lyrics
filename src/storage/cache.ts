@@ -5,6 +5,10 @@ export const POSITIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const NEGATIVE_TTL_MS = 60 * 60 * 1000;           // 1 hour
 export const STATIC_TTL_MS = 24 * 60 * 60 * 1000;
 export const MEMORY_CAPACITY = 100;
+// About 500 songs, since each song is stored under two keys.
+export const MAX_STORED_ENTRIES = 1000;
+// Lyrics for the current track load at startup, so the cleanup waits until that is done.
+const PRUNE_DELAY_MS = 30_000;
 const BINI_MATCH_POLICY = 1;
 const CACHE_KEY_VERSION = 'v2';
 
@@ -116,10 +120,40 @@ export class IndexedDbStorage {
             store.createIndex('cachedAt', 'cachedAt', { unique: false });
           }
         };
-        req.onsuccess = () => resolve(req.result);
+        req.onsuccess = () => {
+          setTimeout(() => void this.prune(), PRUNE_DELAY_MS);
+          resolve(req.result);
+        };
         req.onerror = () => resolve(null);
       } catch {
         resolve(null);
+      }
+    });
+  }
+
+  // get() only drops an expired entry when that song is looked up again, so entries for songs
+  // never replayed would stay forever. Walks newest first so the cap keeps recent songs.
+  async prune(maxEntries = MAX_STORED_ENTRIES): Promise<void> {
+    const db = await this.getDb();
+    if (!db) return;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const now = Date.now();
+        let kept = 0;
+        const req = tx.objectStore(STORE_NAME).index('cachedAt').openCursor(null, 'prev');
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) return;
+          if (now > (cursor.value as CacheEntry).expiresAt || ++kept > maxEntries) cursor.delete();
+          cursor.continue();
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+        tx.onabort = () => resolve();
+      } catch {
+        resolve();
       }
     });
   }

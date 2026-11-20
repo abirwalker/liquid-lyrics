@@ -6,6 +6,7 @@ import { createBiniLyricsProvider } from './providers/binilyrics';
 import { createAmllProvider } from './providers/amll';
 import { createLrclibProvider } from './providers/lrclib';
 import { createSpotifyLyricsProvider, isSpotifyInterludeText } from './providers/spotify';
+import { ProviderUnavailable } from './providers/request';
 import { defaultCache } from '../storage/cache';
 import { cleanTitle, getPrimaryArtist, createCleanQuery } from './cleaner';
 
@@ -19,7 +20,7 @@ function lyricQuality(result: LyricsResult | null): number {
   return 1;
 }
 
-type ProviderOutcome = 'unavailable' | 'invalid' | 'instrumental' | 'static' | 'line' | 'word' | 'error';
+type ProviderOutcome = 'unavailable' | 'unreachable' | 'invalid' | 'instrumental' | 'static' | 'line' | 'word' | 'error';
 type ProviderAttempt = {
   provider: string;
   outcome: ProviderOutcome;
@@ -64,7 +65,7 @@ async function runLyricsChain(
       if (quality > lyricQuality(best)) best = normalized;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      report('error', probeAll ? { error: message } : undefined);
+      report(error instanceof ProviderUnavailable ? 'unreachable' : 'error', probeAll ? { error: message } : undefined);
       continue;
     }
   }
@@ -80,10 +81,16 @@ export async function fetchLyricsChain(
   return runLyricsChain(query, providers, signal, stopOnLine);
 }
 
-function createProviderTiers(): { primary: LyricsProvider[]; fallback: LyricsProvider[] } {
+const HAN = /\p{Script=Han}/u;
+
+// AMLL's catalog is mostly Chinese releases with word timing. For those it runs before Spotify,
+// which would otherwise stop the chain with line timing before AMLL is asked.
+function createProviderTiers(query?: LyricsQuery): { primary: LyricsProvider[]; fallback: LyricsProvider[] } {
+  const amllFirst = query !== undefined && HAN.test(`${query.song} ${query.artist}`);
+  const amll = amllFirst ? [createAmllProvider()] : [];
   return {
-    primary: [createBiniLyricsProvider(), createLyricsPlusProvider()],
-    fallback: [createSpotifyLyricsProvider(), createAmllProvider(), createLrclibProvider()],
+    primary: [createBiniLyricsProvider(), createLyricsPlusProvider(), ...amll],
+    fallback: [createSpotifyLyricsProvider(), ...(amllFirst ? [] : [createAmllProvider()]), createLrclibProvider()],
   };
 }
 
@@ -98,7 +105,7 @@ export async function fetchLyrics(
   cache = defaultCache,
 ): Promise<LyricsResult | null> {
   const cleanQ = createCleanQuery(query);
-  const { primary, fallback } = createProviderTiers();
+  const { primary, fallback } = createProviderTiers(query);
   const providers = [...primary, ...fallback];
   const probeAll = Boolean(query.probeAll);
   const attempts: Array<{ provider: string; outcome: ProviderOutcome; elapsedMs: number; query: 'original' | 'cleaned' }> = [];
@@ -171,12 +178,17 @@ export async function fetchLyrics(
     return selected;
   }
 
-  if (cache) {
-    if (result !== null) {
-      await cache.set(query, result);
-    }
+  const unreachable = [...new Set(attempts.filter(attempt => attempt.outcome === 'unreachable')
+    .map(attempt => attempt.provider))];
+  // A result is not kept for later when a provider that was down could have done better. Only the
+  // primary tier gives word timing in practice; the fallback tier gives line timing at best.
+  const wordProviders = new Set(primary.map(provider => provider.id));
+  const couldImprove = unreachable.some(id => lyricQuality(result) < (wordProviders.has(id) ? 3 : 2));
+  if (cache && result !== null && !couldImprove) {
+    await cache.set(query, result);
   }
 
   reportPath(result);
+  if (!result && unreachable.length) throw new ProviderUnavailable(unreachable.join(', '), 'no other provider had lyrics');
   return result;
 }

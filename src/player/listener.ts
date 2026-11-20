@@ -1,6 +1,11 @@
 import type { LyricsQuery, LyricsResult } from '../types/types';
 import { getSongwriters } from '../types/types';
 import { logger as defaultLogger } from '../utils/logger';
+import { ProviderUnavailable } from '../lyrics/providers/request';
+
+// Short outages (a server restart, a network switch) usually clear within seconds.
+const RETRY_DELAYS_MS = [5000, 20000];
+
 export interface LyricsLogger {
   info(message: string, ...args: unknown[]): void;
   error(message: string, ...args: unknown[]): void;
@@ -69,7 +74,10 @@ export function extractQuery(item: unknown): LyricsQuery | null {
 export interface LyricsControllerOptions {
   logger?: LyricsLogger;
   onLyricsLoaded?: (result: LyricsResult | null, query: LyricsQuery) => void;
+  retryDelaysMs?: readonly number[];
 }
+
+type LoadOptions = { force?: boolean; skipCache?: boolean; probeAll?: boolean; attempt?: number };
 
 export interface LyricsState {
   readonly item: unknown;
@@ -93,8 +101,10 @@ export function createLyricsController(
       ? {}
       : (loggerOrOptions as LyricsControllerOptions);
 
+  const retryDelaysMs = callbacks.retryDelaysMs ?? RETRY_DELAYS_MS;
   let activeUri: string | null = null;
   let activeAbort: AbortController | null = null;
+  let cancelRetry: (() => void) | null = null;
   let state: LyricsState = Object.freeze({ item: null, query: null, status: 'idle', result: null, error: null });
   const subscribers = new Set<(state: LyricsState) => void>();
 
@@ -128,16 +138,32 @@ export function createLyricsController(
     publish({ ...state, result: { ...state.result, songwriters } });
   }
 
-  async function loadTrack(
-    item: unknown,
-    options: { force?: boolean; skipCache?: boolean; probeAll?: boolean } = {},
-  ): Promise<LyricsResult | null> {
+  // After the timed retries run out, coming back online still retries once more.
+  function scheduleRetry(item: unknown, options: LoadOptions) {
+    const attempt = options.attempt ?? 0;
+    const retry = () => {
+      cancelRetry?.();
+      void loadTrack(item, { ...options, force: true, attempt: attempt + 1 });
+    };
+    const delay = retryDelaysMs[attempt];
+    const timer = delay === undefined ? undefined : setTimeout(retry, delay);
+    const events = typeof window === 'undefined' ? null : window;
+    events?.addEventListener('online', retry);
+    cancelRetry = () => {
+      clearTimeout(timer);
+      events?.removeEventListener('online', retry);
+      cancelRetry = null;
+    };
+  }
+
+  async function loadTrack(item: unknown, options: LoadOptions = {}): Promise<LyricsResult | null> {
     const raw = item as Record<string, any> | null;
     const uri = typeof raw?.uri === 'string' ? raw.uri : null;
 
     if (!options.force && uri && uri === activeUri) {
       return null;
     }
+    cancelRetry?.();
 
     if (activeAbort) {
       activeAbort.abort();
@@ -152,13 +178,14 @@ export function createLyricsController(
       : extracted;
     const abort = query ? new AbortController() : null;
     activeAbort = abort;
-    publish({ item, query, status: query ? 'loading' : 'idle', result: null, error: null });
+    // A retry keeps the current message on screen instead of flashing the loading state.
+    if (!options.attempt) publish({ item, query, status: query ? 'loading' : 'idle', result: null, error: null });
 
     if (!query || !abort || abort.signal.aborted || activeAbort !== abort) {
       return null;
     }
 
-    const actionLabel = options.force ? 'Refetching track' : 'Track changed';
+    const actionLabel = options.attempt ? `Retry ${options.attempt}` : options.force ? 'Refetching track' : 'Track changed';
     logger.info(`[Liquid Lyrics] ${actionLabel}: ${query.artist} - ${query.song}`);
     logger.info('[Liquid Lyrics] Fetching lyrics for:', {
       song: query.song,
@@ -195,7 +222,12 @@ export function createLyricsController(
       return result;
     } catch (error: any) {
       if (!abort.signal.aborted) {
-        logger.error(`[Liquid Lyrics] Error fetching lyrics for "${query.song}":`, error?.message ?? error);
+        if (error instanceof ProviderUnavailable) {
+          logger.info(`[Liquid Lyrics] Lyrics servers unreachable for "${query.song}", will retry:`, error.message);
+          scheduleRetry(item, options);
+        } else {
+          logger.error(`[Liquid Lyrics] Error fetching lyrics for "${query.song}":`, error?.message ?? error);
+        }
         publish({ item, query, status: 'error', result: null,
           error: error instanceof Error ? error.message : String(error) });
         callbacks.onLyricsLoaded?.(null, query);
@@ -218,6 +250,7 @@ export function createLyricsController(
   }
 
   function destroy() {
+    cancelRetry?.();
     if (activeAbort) {
       activeAbort.abort();
       activeAbort = null;

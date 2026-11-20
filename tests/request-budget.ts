@@ -3,6 +3,7 @@ import { createAmllProvider } from '../src/lyrics/providers/amll';
 import { createLrclibProvider } from '../src/lyrics/providers/lrclib';
 import { fetchLyrics } from '../src/lyrics/chain';
 import { LyricsCache } from '../src/storage/cache';
+import { ProviderUnavailable } from '../src/lyrics/providers/request';
 
 export async function runBudgetChecks() {
   const originalFetch = globalThis.fetch;
@@ -11,6 +12,14 @@ export async function runBudgetChecks() {
     if (!ok) throw new Error(message);
     checks++;
   }
+  const unreachable = async (task: Promise<unknown>) => {
+    try {
+      await task;
+      return false;
+    } catch (error) {
+      return error instanceof ProviderUnavailable;
+    }
+  };
   try {
     const calls: string[] = [];
     globalThis.fetch = async input => {
@@ -41,7 +50,7 @@ export async function runBudgetChecks() {
       if (url.startsWith('https://lrc.red')) return new Response(null, { status: 504 });
       throw new Error(`Unexpected request: ${url}`);
     };
-    check(await createBiniLyricsProvider().fetch({ song: 'Test', artist: 'Artist' }) === null &&
+    check(await unreachable(createBiniLyricsProvider().fetch({ song: 'Test', artist: 'Artist' })) &&
       calls.filter(url => url.startsWith('https://lrc.red')).length === 1,
     'A failed lyric-file host is skipped only for this Bini lookup');
 
@@ -108,10 +117,10 @@ export async function runBudgetChecks() {
       calls.push(String(input));
       return new Response(null, { status: 504 });
     };
-    check(await createAmllProvider().fetch({ song: 'Test', artist: 'Artist', spotifyId: 'track123' }) === null &&
+    check(await unreachable(createAmllProvider().fetch({ song: 'Test', artist: 'Artist', spotifyId: 'track123' })) &&
       calls.length === 1, 'AMLL 504 stops AMLL search variants');
     calls.length = 0;
-    check(await createLrclibProvider().fetch({ song: 'Test', artist: 'Artist' }) === null &&
+    check(await unreachable(createLrclibProvider().fetch({ song: 'Test', artist: 'Artist' })) &&
       calls.length === 1, 'LRCLIB 504 stops LRCLIB search variants');
 
     calls.length = 0;

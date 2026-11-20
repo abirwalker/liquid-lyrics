@@ -1,5 +1,6 @@
 import { createLyricsController, initPlayerListener, type LyricsState } from '../src/player/listener';
 import type { LyricsResult } from '../src/types/types';
+import { ProviderUnavailable } from '../src/lyrics/providers/request';
 
 export async function runSharedLyricsStateChecks() {
   let checks = 0;
@@ -90,6 +91,62 @@ export async function runSharedLyricsStateChecks() {
   check(healthy.at(-1)?.status === 'error' && healthy.at(-1)?.error === 'Network failure' && viewErrors > 0,
     'A failing view cannot block another view or hide lookup errors');
   failing.destroy();
+
+  const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const songsTried: string[] = [];
+  let downFor = 2;
+  const flaky = createLyricsController(async query => {
+    songsTried.push(query.song);
+    if (downFor-- > 0) throw new ProviderUnavailable('binilyrics', 'HTTP 503');
+    return result;
+  }, { logger, retryDelaysMs: [10, 10] });
+  const flakyStates: LyricsState[] = [];
+  flaky.subscribe(state => flakyStates.push(state));
+  await flaky.onTrackChange(first);
+  check(flaky.getState().status === 'error', 'An outage first shows the no-lyrics state');
+  await wait(60);
+  check(flaky.getState().status === 'ready' && songsTried.join() === 'First,First,First',
+    'An outage retries the same track until a server answers');
+  check(flakyStates.filter(state => state.status === 'loading').length === 1,
+    'Retries keep the current message instead of flashing the loading state');
+  flaky.destroy();
+
+  songsTried.length = 0;
+  downFor = 1;
+  const skipped = createLyricsController(async query => {
+    songsTried.push(query.song);
+    if (query.song === 'First' && downFor-- > 0) throw new ProviderUnavailable('binilyrics', 'HTTP 503');
+    return result;
+  }, { logger, retryDelaysMs: [20] });
+  await skipped.onTrackChange(first);
+  await skipped.onTrackChange(second);
+  await wait(60);
+  check(songsTried.join() === 'First,Second', 'Changing track cancels the pending retry');
+  skipped.destroy();
+
+  songsTried.length = 0;
+  const neverAnswers = createLyricsController(async query => {
+    songsTried.push(query.song);
+    throw new ProviderUnavailable('binilyrics', 'offline');
+  }, { logger, retryDelaysMs: [5] });
+  await neverAnswers.onTrackChange(first);
+  await wait(40);
+  check(songsTried.length === 2, 'Timed retries stop after the configured attempts');
+  window.dispatchEvent(new Event('online'));
+  await wait(10);
+  check(songsTried.length === 3, 'Coming back online retries once more');
+  neverAnswers.destroy();
+  window.dispatchEvent(new Event('online'));
+  await wait(10);
+  check(songsTried.length === 3, 'Destroy removes the online retry');
+
+  let plainFailures = 0;
+  const notAnOutage = createLyricsController(async () => { plainFailures++; throw new Error('Parser bug'); },
+    { logger, retryDelaysMs: [5] });
+  await notAnOutage.onTrackChange(first);
+  await wait(30);
+  check(plainFailures === 1, 'Other errors are not retried');
+  notAnOutage.destroy();
 
   const requestedSongs: string[] = [];
   const redirected = createLyricsController(async query => {

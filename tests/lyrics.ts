@@ -4,6 +4,7 @@ import { adaptSpotifyLyrics, createSpotifyLyricsProvider } from '../src/lyrics/p
 import { createAmllProvider } from '../src/lyrics/providers/amll';
 import { createBiniLyricsProvider, createBiniSearchPlan, selectBiniItems } from '../src/lyrics/providers/binilyrics';
 import { scoreCandidate } from '../src/lyrics/providers/matching';
+import { ProviderUnavailable } from '../src/lyrics/providers/request';
 import { fromLRC, fromPlain, fromTTML } from '../src/lyrics/formats';
 import { isValidResult as validLyrics } from '../src/types/types';
 import type { LyricsResult as Lyrics, LyricsProvider } from '../src/types/types';
@@ -86,6 +87,14 @@ export async function runBoundaryChecks() {
     if (!condition) throw new Error(message);
     checks++;
   }
+  const unreachable = async (task: Promise<unknown>) => {
+    try {
+      await task;
+      return false;
+    } catch (error) {
+      return error instanceof ProviderUnavailable;
+    }
+  };
   const query = { song: 'Test', artist: 'Artist' };
   const good = fromPlain('custom', 'A short song')!;
   for (const bad of [null, {}, [], { ...good, source: '' }, { ...good, lines: [null] },
@@ -615,12 +624,15 @@ export async function runBoundaryChecks() {
     }
     let serverErrorAttempts = 0;
     globalThis.fetch = async () => { serverErrorAttempts++; return new Response(null, { status: 500 }); };
-    check(await createLyricsPlusProvider().fetch(strictQuery) === null && serverErrorAttempts === 1,
-      'LyricsPlus does not retry server errors');
+    check(await unreachable(createLyricsPlusProvider().fetch(strictQuery)) && serverErrorAttempts === 1,
+      'LyricsPlus reports a server error as unreachable without retrying');
     let rateLimitAttempts = 0;
     globalThis.fetch = async () => { rateLimitAttempts++; return new Response(null, { status: 429 }); };
-    check(await createLyricsPlusProvider().fetch(strictQuery) === null && rateLimitAttempts === 1,
-      'LyricsPlus falls through after one rate-limited request');
+    check(await unreachable(createLyricsPlusProvider().fetch(strictQuery)) && rateLimitAttempts === 1,
+      'LyricsPlus reports one rate-limited request as unreachable');
+    globalThis.fetch = async () => new Response(null, { status: 404 });
+    check(await createLyricsPlusProvider().fetch(strictQuery) === null,
+      'LyricsPlus treats 404 as an answer, not an outage');
     const biniLookupRequests: string[] = [];
     globalThis.fetch = async input => {
       const url = new URL(String(input));
@@ -867,8 +879,18 @@ export async function runBoundaryChecks() {
       if (url === 'https://example.com/test.ttml') return new Response(ttml);
       throw new Error('Later provider should not run');
     };
-    check(await createBiniLyricsProvider().fetch(query) === null && mixedBiniAttempts === 1,
+    check(await unreachable(createBiniLyricsProvider().fetch(query)) && mixedBiniAttempts === 1,
       'Bini does not repeat metadata searches after a network failure');
+    globalThis.fetch = async input => String(input).startsWith('https://lyrics-api.binimum.org/')
+      ? Response.json({ results: [{ track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/test.ttml' }] })
+      : new Response(null, { status: 503 });
+    check(await unreachable(createBiniLyricsProvider().fetch(query)),
+      'Bini reports a found song whose lyric file server is down as unreachable');
+    globalThis.fetch = async input => String(input).startsWith('https://lyrics-api.binimum.org/')
+      ? Response.json({ results: [{ track_name: 'Test', artist_name: 'Artist', lyricsUrl: 'https://example.com/test.ttml' }] })
+      : new Response(null, { status: 404 });
+    check(await createBiniLyricsProvider().fetch(query) === null,
+      'Bini treats a missing lyric file as an answer');
     globalThis.fetch = async input => {
       const url = new URL(String(input));
       if (url.pathname.endsWith('/get') && url.searchParams.has('spotifyId')) {
@@ -918,9 +940,59 @@ export async function runBoundaryChecks() {
     setTimeout(() => spotifyAbort.abort(), 10);
     check(await createSpotifyLyricsProvider().fetch({ ...query, spotifyId: 'track123', imageUri: 'spotify:image:cover' }, spotifyAbort.signal) === null,
       'Spotify provider stops waiting when caller aborts');
+    spotifySend = async () => ({ body: spotifyFixture, status: 200 });
+    let amllCalls = 0;
+    globalThis.fetch = async input => {
+      if (!String(input).startsWith('https://api.amll.dev')) return new Response(null, { status: 404 });
+      amllCalls++;
+      return Response.json({ data: { lyrics: '<tt><p begin="1" end="2"><span begin="1" end="2">你好</span></p></tt>' } });
+    };
+    const spotifyIds = { spotifyId: 'track123', imageUri: 'spotify:image:cover', skipCache: true };
+    const chinese = await fetchLyrics({ song: '你好', artist: '周杰倫', ...spotifyIds }, undefined, new LyricsCache());
+    check(chinese?.source === 'amll' && chinese.lines[0].timing === 'word',
+      'A Chinese song asks AMLL for word timing before taking Spotify line timing');
+    amllCalls = 0;
+    const english = await fetchLyrics({ ...query, ...spotifyIds }, undefined, new LyricsCache());
+    check(english?.source === 'spotify' && amllCalls === 0, 'Other songs still stop at Spotify line timing');
     (globalThis as any).Spicetify = originalSpicetify;
     globalThis.fetch = async () => { throw new Error('network unavailable'); };
-    for (const provider of createDefaultChain()) check(await provider.fetch(query) === null, 'Offline provider returns null');
+    for (const provider of createDefaultChain()) {
+      // Spotify's own client does not report outages in a known shape, so it keeps answering null.
+      check(provider.id === 'spotify' ? await provider.fetch(query) === null : await unreachable(provider.fetch(query)),
+        `Offline ${provider.id} reports unreachable`);
+    }
+    const offlineCache = new LyricsCache();
+    check(await unreachable(fetchLyrics({ ...query, song: 'Offline song' }, undefined, offlineCache)),
+      'No lyrics while providers are down is an outage, not a miss');
+    globalThis.fetch = async () => new Response(null, { status: 404 });
+    check(await fetchLyrics({ ...query, song: 'Missing song' }, undefined, offlineCache) === null,
+      'No lyrics from providers that answered is a plain miss');
+    globalThis.fetch = async input => String(input).startsWith('https://lrclib.net/api/get')
+      ? Response.json({ syncedLyrics: '[00:01]Line timing only' })
+      : new Response(null, { status: 502 });
+    const outageQuery = { ...query, song: 'Outage song' };
+    const duringOutage = await fetchLyrics(outageQuery, undefined, offlineCache);
+    check(duringOutage?.source === 'lrclib' && !(await offlineCache.get(outageQuery)).hit,
+      'A weaker result found while a provider was down is shown but not cached');
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.startsWith('https://lrclib.net/api/get')) return Response.json({ syncedLyrics: '[00:01]Line timing only' });
+      return new Response(null, { status: url.startsWith('https://api.amll.dev') ? 503 : 404 });
+    };
+    const fallbackOutageQuery = { ...query, song: 'Fallback outage song' };
+    check((await fetchLyrics(fallbackOutageQuery, undefined, offlineCache))?.source === 'lrclib' &&
+      (await offlineCache.get(fallbackOutageQuery)).hit,
+      'Line timing is cached when only a fallback provider, which has no word timing, was down');
+    globalThis.fetch = async (_input, init) => new Promise((_, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    });
+    for (const provider of createDefaultChain()) {
+      if (provider.id === 'spotify') continue;
+      const stopping = new AbortController();
+      const task = provider.fetch(query, stopping.signal);
+      setTimeout(() => stopping.abort(), 5);
+      check(await task === null, `${provider.id} returns null, not unreachable, when the track changes mid-request`);
+    }
     const stopped = new AbortController();
     stopped.abort();
     let requested = false;
@@ -1108,6 +1180,24 @@ export async function runBoundaryChecks() {
     const cachedCleanResult = await fetchLyrics(remastered, undefined, cleanCache);
     check(cachedCleanResult?.cached === true && cachedCleanResult.lines[0].timing === 'line' && cleanCalls === callsAfterClean,
       'Cleaned line timing is cached for the original track query');
+
+    const pruneStorage = new IndexedDbStorage();
+    await pruneStorage.clear();
+    const now = Date.now();
+    await pruneStorage.set({ key: 'v2:expired', result: null, cachedAt: now + 10, expiresAt: now - 1 });
+    for (let i = 0; i < 4; i++) {
+      await pruneStorage.set({ key: `v2:kept-${i}`, result: null, cachedAt: now + i, expiresAt: now + 60000 });
+    }
+    await pruneStorage.prune(3);
+    const storedKeys = await new Promise<string[]>((resolveKeys) => {
+      const opening = indexedDB.open('liquid-lyrics-cache');
+      opening.onsuccess = () => {
+        const request = opening.result.transaction('lyrics').objectStore('lyrics').getAllKeys();
+        request.onsuccess = () => { opening.result.close(); resolveKeys((request.result as string[]).sort()); };
+      };
+    });
+    check(storedKeys.join() === 'v2:kept-1,v2:kept-2,v2:kept-3',
+      'Startup cleanup removes expired entries, even the newest, and keeps only the newest up to the cap');
   } finally {
     globalThis.fetch = originalFetch;
     (globalThis as any).Spicetify = originalSpicetify;

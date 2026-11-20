@@ -2,6 +2,7 @@ import type { LyricsLine, LyricsProvider, LyricsQuery, LyricsResult, LyricsSegme
 import { isRecord, isValidResult, normalizeCollapsedTiming, getSongwriters } from '../../types/types';
 import { cleanTitle, getPrimaryArtist } from '../cleaner';
 import { normalizeMatchText, scoreCandidate } from './matching';
+import { fetchFrom, rethrowIfUnreachable } from './request';
 
 const API = 'https://lyricsplus.binimum.org/v2/lyrics/get';
 
@@ -120,13 +121,14 @@ export function createLyricsPlusProvider(): LyricsProvider {
         ? query.durationMs : null;
       const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000);
       try {
-        const response = await fetch(`${API}?${params}`, { signal: deadline, credentials: 'omit' });
+        const response = await fetchFrom('lyricsplus', `${API}?${params}`, { signal: deadline, credentials: 'omit' }, signal);
         if (!response.ok) return null;
         const body: unknown = await response.json();
         if (!matchesBroadResult(body, title, stripArtistCredit(query.song, query.artist), query.artist, expectedDurationMs)) return null;
         const result = adaptLyricsPlus(body, query);
         return deadline.aborted ? null : result;
-      } catch {
+      } catch (error) {
+        rethrowIfUnreachable('lyricsplus', error, deadline, signal);
         return null;
       }
     },
